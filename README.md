@@ -17,7 +17,9 @@ file). C++, C and Python. No admin rights, no extra software besides Git.
 (about 0.01 s to reach the app, instead of 2-4 s to start PowerShell every time), and online
 lookups and GitHub pushes run in the background so the window never freezes.
 
-![Main window](docs/screenshot-main.png)
+**Get it:** [download CP-Solution-Saver.zip](https://github.com/MostafaSamyFayez/CP-Solution-Saver/releases/latest/download/CP-Solution-Saver.zip) > extract > double-click **Install.bat**. Details in [Install](#install).
+
+![Main window](app/docs/screenshot-main.png)
 
 ---
 
@@ -70,24 +72,26 @@ lookups and GitHub pushes run in the background so the window never freezes.
 
 ## Install
 
-Requirements: Windows 10/11 and [Git for Windows](https://git-scm.com/download/win) (default options).
-PowerShell 5.1 is built into Windows. A GitHub account is **optional**.
+You need Windows 10/11 and [Git for Windows](https://git-scm.com/download/win) (install it with the
+default options). A GitHub account is **optional**. No admin rights needed.
 
-1. Get this repo: `git clone https://github.com/MostafaSamyFayez/CP-Solution-Saver.git`
-   (or *Code → Download ZIP* and unzip).
-2. Double-click **`install.bat`** (if Windows SmartScreen appears: *More info* > *Run anyway*).
-3. A short **welcome tour** explains the header and the shortcuts, then **Settings** opens. Choose:
-   - **Practice files**: the file you solve problems in, one per language (`main.cpp`, and if you
-     like `main.c`, `main.py`).
-   - **Solutions folder**: **any empty folder** (use *Make New Folder* in the folder picker). It becomes
-     a new local repo automatically. Already have a solutions repo on GitHub? Use **Clone a GitHub repo...**.
-     Want one on GitHub right away? **Create a new GitHub repo...**.
-4. The first time you save, if Git doesn't know your **name and email** yet, a small window asks for
-   them (one time per PC; Git records them with every save).
+1. **Download [CP-Solution-Saver.zip](https://github.com/MostafaSamyFayez/CP-Solution-Saver/releases/latest/download/CP-Solution-Saver.zip)** (always the latest version).
+2. Right-click the zip > **Extract All...**, then open the extracted folder.
+3. Double-click **`Install.bat`**. (If a blue Windows *"protected your PC"* box appears: *More info* > *Run anyway*.)
+4. Follow the **welcome window**: a short tour of the shortcuts, then choose
+   - your **practice file** (`main.cpp`, and if you like `main.c` / `main.py`), and
+   - a **folder for your solutions**: any **empty folder** works (it becomes a repo by itself). Already have
+     a solutions repo on GitHub? Use **Clone a GitHub repo...** instead.
+5. Done. The first time you save, a small window may ask for your **name and email** for Git (once per PC).
+
+After installing, the downloaded folder isn't needed any more - you can delete it.
+
+What's in the download: **`Install.bat`** (the only thing you run), this README, the license, and an
+`app` folder with the program itself (you never need to open it).
 
 See the tour again any time: tray icon > **How to use...** (or the *How to use* button in the window).
 
-![Welcome tour](docs/screenshot-welcome.png)
+![Welcome tour](app/docs/screenshot-welcome.png)
 
 ### Without GitHub, and connecting it later
 
@@ -108,15 +112,18 @@ The installer:
 | Hotkeys | **Ctrl+Alt+Shift+S** save window, **Ctrl+Alt+Shift+F** quick save, **Ctrl+Alt+Shift+B** solved problems |
 | Start Menu extras | *Quick Save*, *Solved problems*, *Code templates*, *How to use*, *Settings*, *Read me*, *Uninstall* |
 
-You can also install non-interactively:
+You can also install non-interactively (from the `app` folder):
 
 ```powershell
 .\install.ps1 -MainCpp "C:\path\to\main.cpp" -RepoPath "C:\Users\me\Desktop\Problem-Solving-Solutions"
 .\install.ps1 -PracticeFile "C:\path\to\main.cpp", "C:\path\to\main.py"     # several languages
 ```
 
-Updating = `git pull` in this repo and run `install.bat` again (your settings are kept; the
-running tray app is restarted automatically).
+**Updating:** download the zip again, extract it, run `Install.bat`. Your settings, templates and
+solutions are kept; the running tray app is restarted automatically.
+
+**From source (developers):** `git clone https://github.com/MostafaSamyFayez/CP-Solution-Saver.git`
+and run `Install.bat` in the clone; `git pull` + `Install.bat` to update.
 
 ## Shortcuts and the tray icon
 
@@ -160,7 +167,7 @@ When the header is already right, skip the window:
 2. Press **Ctrl+Alt+Shift+F** (or tray icon > *Quick save*, or Start Menu > *CP Solution Saver - Quick Save*).
 3. A message box in the middle of the screen shows the result, for example:
 
-   ![Quick save result](docs/screenshot-quicksave.png)
+   ![Quick save result](app/docs/screenshot-quicksave.png)
 
    While it works, a small *"Saving main.cpp ..."* box shows that it's busy. **Open on GitHub**
    opens the saved file on GitHub.
@@ -182,7 +189,7 @@ notification*. The full log of the last quick save is in `%APPDATA%\CPSolutionSa
 Open it with **Ctrl+Alt+Shift+B**, the **Solved problems...** button in the window, the tray menu, or
 Start Menu > *CP Solution Saver - Solved problems*.
 
-![Solved problems browser](docs/screenshot-browser.png)
+![Solved problems browser](app/docs/screenshot-browser.png)
 
 - **Search** box: matches name, problem ID, platform, topics, notes, file name and link (several words = all must match). `Ctrl+F` jumps to it.
 - **Platform / Topic / Difficulty / Language** filters (built from what you've solved); **Clear** resets them.
@@ -210,7 +217,7 @@ switch with the *Practice file* dropdown at the top of the window.
 
 ## Code templates
 
-![Code templates](docs/screenshot-templates.png)
+![Code templates](app/docs/screenshot-templates.png)
 
 Open **Templates...** in the window (or in Settings). Built in:
 
@@ -372,12 +379,12 @@ cpsaver.cmd -Version
 
 ## Testing
 
-Double-click **`run-tests.bat`** (or `powershell -ExecutionPolicy Bypass -File tests\Run-Tests.ps1 -Online`).
+Double-click **`app\run-tests.bat`** (or `powershell -ExecutionPolicy Bypass -File app\tests\Run-Tests.ps1 -Online`).
 The tests create a temporary repo with a local remote, so your real repo and GitHub are never touched.
 They cover header parsing, platform detection, saving/updating/keep-both, indexes, template reset,
 console mode end to end, quick save, loading a solution back with backups, C/Python files,
 link identity, the first-solve-date rule, templates, settings migration, and (with `-Online`)
-the Codeforces/LeetCode/CSES/AtCoder lookups (83 checks).
+the Codeforces/LeetCode/CSES/AtCoder lookups (about 130 checks).
 
 ## Uninstall
 
@@ -400,22 +407,27 @@ your solutions repo is never touched. Settings are kept unless you run
 | Visual Studio asks to reload main.cpp | Expected after a reset or a load; choose **Yes**. |
 | Quick save used the wrong language | It uses the practice file saved most recently: save the one you mean (Ctrl+S) first. |
 | *The problem link is required* | Add `Problem Link: https://...` to the header; it's how the app knows which problem it is. |
-| "running scripts is disabled" | Use the shortcuts / `install.bat`: they pass `-ExecutionPolicy Bypass` for this app only. |
+| "running scripts is disabled" | Use the shortcuts / `Install.bat`: they pass `-ExecutionPolicy Bypass` for this app only. |
+| Install.bat says the installer files were not found | You ran it from inside the zip. Right-click the zip > *Extract All...* and run it from the extracted folder. |
 
 ## Project layout
 
 ```
-src/CPSaver.ps1        entry point (window, console mode, quick save, tray host, rebuild index)
-src/CPSaver.Tray.ps1   tray host: hotkeys, tray menu, commands from the launcher
-src/native/*.cs        C# sources of CPSaverLauncher.exe and CPSaver.Native.dll (built by install.ps1)
-src/CPSaver.Core.psm1  all logic: header, languages, platforms, problem identity, online lookup,
-                       saving, git, indexes, templates, quick save, backups
-src/CPSaver.Gui.ps1    Windows Forms windows (theme, save, settings, topics, templates, solved problems,
-                       result window), background jobs
-install.ps1 / .bat     per-user installer
-uninstall.ps1          uninstaller
-tests/Run-Tests.ps1    self-tests
-docs/                  screenshots
+Install.bat                 the installer (runs app\install.ps1)
+README.md, LICENSE
+app/
+  src/CPSaver.ps1           entry point (window, console mode, quick save, tray host, rebuild index)
+  src/CPSaver.Tray.ps1      tray host: hotkeys, tray menu, commands from the launcher
+  src/native/*.cs           C# sources of CPSaverLauncher.exe and CPSaver.Native.dll (built by install.ps1)
+  src/CPSaver.Core.psm1     all logic: header, languages, platforms, problem identity, online lookup,
+                            saving, git, indexes, templates, quick save, backups
+  src/CPSaver.Gui.ps1       Windows Forms windows (theme, welcome tour, save, settings, topics,
+                            templates, solved problems, result window), background jobs
+  install.ps1, uninstall.ps1
+  tests/Run-Tests.ps1       self-tests (run-tests.bat)
+  tools/New-Release.ps1     maintainers: build CP-Solution-Saver.zip and publish a GitHub release
+  docs/                     screenshots
+  CHANGELOG.md
 ```
 
 ## License

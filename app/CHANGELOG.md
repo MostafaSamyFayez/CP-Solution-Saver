@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.4.1 - 2026-11-23
+
+### Simpler download
+- One file to download: **CP-Solution-Saver.zip** from the Releases page (link at the top of the README).
+  Inside: `Install.bat`, the README, the license, and an `app` folder - nothing else to look at.
+- The repo is tidied the same way: only `Install.bat`, `README.md`, `LICENSE` and `app/` at the top.
+- `Install.bat` explains what to do if it is run from inside the zip without extracting it.
+- After installing, the installer says the downloaded folder can be deleted.
+- `app/tools/New-Release.ps1` builds the zip and publishes the GitHub release (for maintainers).
+
 ## 2.4.0 - 2026-11-23
 
 ### Easier for new users

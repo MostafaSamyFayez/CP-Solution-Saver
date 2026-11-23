@@ -9,7 +9,7 @@
     - Starts the app in the tray; on first run it shows a short welcome tour, then Settings
 
 .EXAMPLE
-    .\install.bat
+    Install.bat   (in the folder above this one)
     .\install.ps1 -MainCpp "C:\...\main.cpp" -RepoPath "C:\Users\me\Desktop\Problem-Solving-Solutions"
     .\install.ps1 -PracticeFile "C:\...\main.cpp", "C:\...\main.py"      # one practice file per language"
 #>
@@ -72,8 +72,11 @@ Step "Copying the app to $InstallDir"
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item -Path (Join-Path $src '*') -Destination $InstallDir -Recurse -Force
 foreach ($extra in @('uninstall.ps1', 'README.md', 'LICENSE', 'CHANGELOG.md')) {
-    $p = Join-Path $PSScriptRoot $extra
-    if (Test-Path $p) { Copy-Item $p -Destination $InstallDir -Force }
+    # next to this script (app\) or one level up (README.md and LICENSE sit next to Install.bat)
+    foreach ($d in @($PSScriptRoot, (Split-Path $PSScriptRoot -Parent))) {
+        $p = Join-Path $d $extra
+        if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination $InstallDir -Force; break }
+    }
 }
 if (Test-Path (Join-Path $PSScriptRoot 'tests')) { Copy-Item (Join-Path $PSScriptRoot 'tests') -Destination $InstallDir -Recurse -Force }
 
@@ -115,7 +118,7 @@ if ($PSVersionTable.PSVersion.Major -le 5) {
         Warn "Could not build the fast launcher ($($_.Exception.Message)). Falling back to the slower launcher."
     }
 } else {
-    Warn 'Run install.bat (Windows PowerShell 5.1) to build the fast launcher; using the slower launcher.'
+    Warn 'Run Install.bat (Windows PowerShell 5.1) to build the fast launcher; using the slower launcher.'
 }
 
 # 3. shortcuts ----------------------------------------------------------------
@@ -223,3 +226,4 @@ if ($nativeOk -and -not $Quiet) {
 Write-Host "`nInstalled CP Solution Saver $(Get-CPAppVersion)." -ForegroundColor Green
 Write-Host 'Shortcuts:  Ctrl+Alt+Shift+S save window   |   Ctrl+Alt+Shift+F quick save   |   Ctrl+Alt+Shift+B solved problems' -ForegroundColor Green
 Write-Host 'Everything else: right-click the CP Solution Saver icon in the tray (next to the clock).' -ForegroundColor Green
+Write-Host 'The app is installed - you can delete the downloaded folder now (keep it only if you want to run the tests).' -ForegroundColor DarkGray

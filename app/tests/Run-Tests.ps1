@@ -330,7 +330,7 @@ finally {
 
 # Every button in the windows must do something (a missing click handler is easy to miss)
 Write-Host "`n[12] GUI buttons are wired" -ForegroundColor Cyan
-foreach ($sf in @('CPSaver.ps1', 'CPSaver.Gui.ps1', 'CPSaver.Tray.ps1', 'CPSaver.Core.psm1', '..\install.ps1', '..\uninstall.ps1')) {
+foreach ($sf in @('CPSaver.ps1', 'CPSaver.Gui.ps1', 'CPSaver.Tray.ps1', 'CPSaver.Core.psm1', '..\install.ps1', '..\uninstall.ps1', '..\tools\New-Release.ps1')) {
     $perr = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $SrcDir $sf), [ref]$null, [ref]$perr)
     Check "$sf has no syntax errors" (@($perr).Count -eq 0) ((@($perr) | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Message)" }) -join '; ')
 }

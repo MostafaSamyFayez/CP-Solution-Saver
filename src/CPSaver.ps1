@@ -137,7 +137,7 @@ if ($RebuildIndex) {
     $r = Invoke-CPGit $repo commit -q -m 'Rebuild solution indexes'
     if ($r.Code -ne 0) { Say $r.Output Red; exit 1 }
     Say 'Committed: Rebuild solution indexes' Green
-    if (-not $NoPush -and $config.PushAfterSave) {
+    if (-not $NoPush -and $config.PushAfterSave -and (Invoke-CPGit $repo remote).Output) {
         $r = Invoke-CPGit $repo push
         if ($r.Code -ne 0) { Say "Push failed: $($r.Output)" Red; exit 1 }
         Say 'Pushed.' Green

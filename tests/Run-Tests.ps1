@@ -24,6 +24,12 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) ("cpsaver-test-" + [guid]::NewGuid()
 New-Item -ItemType Directory -Path $tmp | Out-Null
 $oldDataDir = $env:CPSAVER_DATA_DIR
 $env:CPSAVER_DATA_DIR = Join-Path $tmp 'appdata'   # keep backups / logs out of the real %APPDATA%
+# git needs a name + email to commit; on a PC (or CI machine) without one, use a test identity
+$oldGitGlobal = $env:GIT_CONFIG_GLOBAL
+if (-not "$(& git config user.email 2>$null)".Trim() -or -not "$(& git config user.name 2>$null)".Trim()) {
+    $env:GIT_CONFIG_GLOBAL = Join-Path $tmp 'test-identity.gitconfig'
+    & git config --global user.name 'CP Saver Tests' 2>$null; & git config --global user.email 'tests@example.com' 2>$null
+}
 try {
     Write-Host "`n[1] Header parsing" -ForegroundColor Cyan
     $code = "/*`r`n * Name: Two Arrays`r`n * Link: https://codeforces.com/contest/1234/problem/a`r`n * Tags: greedy, Sortings`r`n * Rating: 1300`r`n * Time Complexity: O(n log n)`r`n * Notes: first line`r`n *   second line`r`n */`r`n`r`n#include <iostream>`r`nint main(){}`r`n"
@@ -235,6 +241,8 @@ try {
     $lr2 = Save-CPSolution -Info (New-CPSolutionInfo -Code $code) -RepoPath $local -Push -UpdateIndexes
     Check 'saving the same code again = no change' ($lr2.Success -and (($lr2.Log -join ' ') -match 'No changes'))
     Check 'listed in solved problems' (@(Get-CPAllSolutions -RepoPath $local).Count -eq 1)
+    Check 'no GitHub link -> no web page offered' ((Get-CPRepoWebUrl $local) -eq $null -and (Get-CPFileWebUrl -RepoPath $local -RelPath 'a/b.cpp') -eq $null)
+    Check 'result says not connected' ($lr.NoRemote)
     # no name/email configured anywhere -> clear message, nothing written
     $noId = Join-Path $tmp 'no-identity'
     New-Item -ItemType Directory -Path $noId | Out-Null
@@ -316,6 +324,7 @@ try {
 }
 finally {
     $env:CPSAVER_DATA_DIR = $oldDataDir
+    $env:GIT_CONFIG_GLOBAL = $oldGitGlobal
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
 

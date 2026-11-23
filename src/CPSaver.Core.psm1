@@ -1000,7 +1000,7 @@ function Save-CPSolution {
     )
     $lines = New-Object System.Collections.Generic.List[string]
     $emit = { param($m) $lines.Add($m); if ($Log) { & $Log $m } }
-    $result = @{ Success = $false; RelPath = ''; IsUpdate = $false; Commit = ''; Pushed = $false; Log = $lines }
+    $result = @{ Success = $false; RelPath = ''; IsUpdate = $false; Commit = ''; Pushed = $false; NoRemote = $false; Log = $lines }
 
     if (-not $Info.Link) { & $emit 'ERROR: The problem link is required. It identifies the problem, so the same problem is never saved twice.'; return $result }
     if (-not $Info.Name) { & $emit 'ERROR: The problem name is empty.'; return $result }
@@ -1097,7 +1097,8 @@ function Save-CPSolution {
     if ($Push) {
         $hasRemote = (Invoke-CPGit $RepoPath remote).Output -match '\S'
         if (-not $hasRemote) {
-            & $emit 'No remote configured; commit kept locally.'
+            $result.NoRemote = $true
+            & $emit 'Not connected to GitHub; commit kept locally.'
         } else {
             & $emit 'Pushing to GitHub...'
             $r = if ($hasUpstream) { Invoke-CPGit $RepoPath push } else { Invoke-CPGit $RepoPath push -u origin HEAD }
@@ -1564,7 +1565,7 @@ function Invoke-CPQuickSave {
                 $out.Title = "Saved: $($info.Name)"
                 $out.Summary = @("$($res.RelPath) ($state)")
                 if ($details) { $out.Summary += ($details -join ' | ') }
-                $out.Summary += $(if ($res.Pushed) { 'Pushed to GitHub.' } elseif ($Config.PushAfterSave) { 'Committed locally (push skipped).' } else { 'Committed locally (push is off in Settings).' })
+                $out.Summary += $(if ($res.Pushed) { 'Pushed to GitHub.' } elseif ($res.NoRemote) { 'Saved on this PC (not connected to GitHub).' } elseif ($Config.PushAfterSave) { 'Committed locally (push skipped).' } else { 'Committed locally (push is off in Settings).' })
             }
             if ($Config.ResetAfterSave) {
                 Reset-CPPracticeFile -MainCppPath $practice -Config $Config
@@ -1698,10 +1699,12 @@ function Get-CPFileWebUrl {
 
 function Get-CPRepoWebUrl {
     param([Parameter(Mandatory)][string]$RepoPath)
-    $u = (Invoke-CPGit $RepoPath remote get-url origin).Output
-    if (-not $u) { return $null }
-    $u = $u.Trim() -replace '\.git$', ''
+    $r = Invoke-CPGit $RepoPath remote get-url origin
+    if ($r.Code -ne 0 -or -not $r.Output) { return $null }   # not connected to GitHub (or any remote)
+    $u = $r.Output.Trim() -replace '\.git$', ''
     if ($u -match '^git@([^:]+):(.+)$') { $u = "https://$($Matches[1])/$($Matches[2])" }
+    if ($u -notmatch '^https?://') { return $null }          # a local folder remote has no web page
+    $u = $u -replace '^(https?://)[^/@]+@', '$1'             # drop a user name in the URL
     return $u
 }
 

@@ -1035,7 +1035,7 @@ function Show-CPMainWindow {
             if ($err -or -not $res) { & $log "ERROR: $err"; & $setStatus 'Something went wrong - see the details below.' $script:CPRed; return }
             if ($res.Success) {
                 $file = [IO.Path]::GetFileName($Config.MainCppPath)
-                $msg = if ($res.Pushed) { "Done! $($res.RelPath) is on GitHub." } elseif ($res.Commit) { "Saved and committed $($res.RelPath) (not pushed)." } else { 'Already saved - this exact solution is in the repo, nothing new to push.' }
+                $msg = if ($res.Pushed) { "Done! $($res.RelPath) is on GitHub." } elseif ($res.Commit -and $res.NoRemote) { "Saved $($res.RelPath) on this PC (not connected to GitHub)." } elseif ($res.Commit) { "Saved and committed $($res.RelPath) (not pushed)." } else { 'Already saved - this exact solution is in the repo, nothing new to push.' }
                 & $setStatus $msg $script:CPGreen
                 if ($ui.OptReset.Checked) {
                     Reset-CPPracticeFile -MainCppPath $Config.MainCppPath -Config $Config
@@ -1110,7 +1110,7 @@ function Show-CPMainWindow {
             if ((Invoke-CPGit $repo diff --cached --quiet).Code -eq 0) { $out.Add('Indexes are already up to date.') }
             else {
                 $r = Invoke-CPGit $repo commit -q -m 'Rebuild solution indexes'; $out.Add('Committed: Rebuild solution indexes')
-                if ($push) { $r = Invoke-CPGit $repo push; $out.Add($(if ($r.Code -eq 0) { 'Pushed.' } else { "Push failed: $($r.Output)" })) }
+                if ($push -and (Invoke-CPGit $repo remote).Output) { $r = Invoke-CPGit $repo push; $out.Add($(if ($r.Code -eq 0) { 'Pushed.' } else { "Push failed: $($r.Output)" })) }
             }
             ,$out.ToArray()
         } -OnDone {

@@ -370,7 +370,7 @@ function Use-CPRepoFolder {
 function Show-CPWelcome {
     <# A short paged tour. Returns $true if finished with "Set up now" / "Start". #>
     param([switch]$NeedsSetup)
-    $f = New-CPForm 'Welcome to CP Solution Saver' 720 560
+    $f = New-CPForm 'Welcome to CP Solution Saver' 720 520
     $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.MinimizeBox = $false
     $hdr = New-CPHeader 'Welcome to CP Solution Saver' 'A quick tour - 5 short steps'
     $f.BackColor = [System.Drawing.Color]::White
@@ -448,12 +448,13 @@ function Show-CPWelcome {
     $body = New-Object System.Windows.Forms.Panel; $body.Dock = 'Fill'
     foreach ($pg in $pages) { $body.Controls.Add($pg) }
 
-    $bar = New-Object System.Windows.Forms.TableLayoutPanel; $bar.Dock = 'Bottom'; $bar.Height = 56; $bar.ColumnCount = 2
-    $bar.Padding = New-Object System.Windows.Forms.Padding(20, 8, 20, 10); $bar.BackColor = $script:CPBg
+    $bar = New-Object System.Windows.Forms.TableLayoutPanel; $bar.Dock = 'Bottom'; $bar.Height = 58; $bar.ColumnCount = 2; $bar.RowCount = 1
+    $bar.Padding = New-Object System.Windows.Forms.Padding(20, 8, 16, 8); $bar.BackColor = $script:CPBg
     [void]$bar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     [void]$bar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$bar.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     $step = New-Object System.Windows.Forms.Label; $step.AutoSize = $true; $step.ForeColor = $script:CPMuted; $step.Anchor = 'Left'; $step.Font = $script:CPFont
-    $nav = New-Object System.Windows.Forms.FlowLayoutPanel; $nav.FlowDirection = 'RightToLeft'; $nav.AutoSize = $true
+    $nav = New-Object System.Windows.Forms.FlowLayoutPanel; $nav.FlowDirection = 'RightToLeft'; $nav.AutoSize = $true; $nav.WrapContents = $false; $nav.Anchor = 'Right'
     $next = New-CPButton 'Next' 110; Set-CPPrimary $next
     $back = New-CPButton 'Back' 90
     $skip = New-CPButton 'Skip tour' 90

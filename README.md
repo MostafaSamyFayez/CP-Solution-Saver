@@ -87,6 +87,8 @@ PowerShell 5.1 is built into Windows. A GitHub account is **optional**.
 
 See the tour again any time: tray icon > **How to use...** (or the *How to use* button in the window).
 
+![Welcome tour](docs/screenshot-welcome.png)
+
 ### Without GitHub, and connecting it later
 
 Everything works on your PC alone: saves are kept in the local repo (the result says

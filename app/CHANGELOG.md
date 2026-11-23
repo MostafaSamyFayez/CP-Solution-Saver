@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.4.2 - 2026-11-23
+
+### Uninstall asks first
+- *Uninstall CP Solution Saver* now opens a small window: **Uninstall** / **Cancel**, and a checkbox
+  *Also delete my settings, code templates and backups* (off by default, so a reinstall remembers
+  your setup). When it's done, a message says what was removed and what was kept.
+- No console window. `uninstall.bat -Yes [-RemoveSettings]` still runs without questions.
+- README: download button at the top.
+
 ## 2.4.1 - 2026-11-23
 
 ### Simpler download

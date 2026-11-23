@@ -392,10 +392,15 @@ the Codeforces/LeetCode/CSES/AtCoder lookups (about 130 checks).
 
 ## Uninstall
 
-Start Menu → *CP Solution Saver* → **Uninstall CP Solution Saver**
-(or run `uninstall.bat` in the install folder). App files and shortcuts are removed;
-your solutions repo is never touched. Settings are kept unless you run
-`uninstall.ps1 -RemoveSettings`.
+Start Menu > *CP Solution Saver* > **Uninstall CP Solution Saver** (or `uninstall.bat` in
+`%LOCALAPPDATA%\Programs\CPSolutionSaver`). It asks first:
+
+- **Uninstall** removes the app, its shortcuts, the tray icon and the keyboard shortcuts.
+- **Also delete my settings, code templates and backups**: leave it unticked if you may install again
+  (the app will remember your setup); tick it to remove everything (`%APPDATA%\CPSolutionSaver`).
+
+Your solutions folder and practice files are never touched. Without questions:
+`uninstall.bat -Yes` (keeps settings) or `uninstall.bat -Yes -RemoveSettings`.
 
 ## Troubleshooting
 

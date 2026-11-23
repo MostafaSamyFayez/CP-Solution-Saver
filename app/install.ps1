@@ -94,7 +94,8 @@ sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidd
 [IO.File]::WriteAllText((Join-Path $InstallDir 'CPSaver.vbs'), ($vbs -replace "\r?\n", "`r`n"), [Text.Encoding]::ASCII)
 $cmd = "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0CPSaver.ps1`" %*`r`n"
 [IO.File]::WriteAllText((Join-Path $InstallDir 'cpsaver.cmd'), $cmd, [Text.Encoding]::ASCII)
-$un = "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0uninstall.ps1`" %*`r`npause`r`n"
+# uninstall.bat asks in a window (no console); "uninstall.bat -Yes [-RemoveSettings]" runs without questions
+$un = "@echo off`r`nif /i `"%~1`"==`"-Yes`" (`r`n    powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0uninstall.ps1`" %*`r`n) else (`r`n    start `"`" powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"%~dp0uninstall.ps1`" %*`r`n)`r`n"
 [IO.File]::WriteAllText((Join-Path $InstallDir 'uninstall.bat'), $un, [Text.Encoding]::ASCII)
 Get-ChildItem $InstallDir -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
 Ok 'Files copied.'
@@ -155,7 +156,9 @@ if ($nativeOk) {
     New-Shortcut (Join-Path $menu 'CP Solution Saver - How to use.lnk') 'welcome' 'A short tour of CP Solution Saver and its shortcuts' ''
 }
 $u = $shell.CreateShortcut((Join-Path $menu 'Uninstall CP Solution Saver.lnk'))
-$u.TargetPath = Join-Path $InstallDir 'uninstall.bat'; $u.WorkingDirectory = $env:TEMP; $u.Save()
+$u.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$u.Arguments = "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$(Join-Path $InstallDir 'uninstall.ps1')`""
+$u.WorkingDirectory = $env:TEMP; $u.IconLocation = $icon; $u.WindowStyle = 7; $u.Description = 'Uninstall CP Solution Saver (asks first)'; $u.Save()
 $r = $shell.CreateShortcut((Join-Path $menu 'Read me.lnk'))
 $r.TargetPath = Join-Path $InstallDir 'README.md'; $r.Save()
 Ok "Start Menu: $menu"

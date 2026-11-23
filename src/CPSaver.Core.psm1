@@ -276,14 +276,10 @@ function Get-CPProblemMetadata {
         switch ($info.Platform) {
             'Codeforces' {
                 if (-not $info.ContestId) { throw 'Could not read contest/problem from the link.' }
-                $api = "https://codeforces.com/api/contest.standings?contestId=$($info.ContestId)&from=1&count=1"
-                $j = Invoke-RestMethod -Uri $api -TimeoutSec $TimeoutSec -Headers @{ 'User-Agent' = 'CPSolutionSaver' }
-                if ($j.status -ne 'OK') { throw "Codeforces API: $($j.comment)" }
-                $p = $j.result.problems | Where-Object { $_.index -eq $info.Index } | Select-Object -First 1
-                if (-not $p) { throw "Problem $($info.Index) not found in contest $($info.ContestId)." }
+                $p = Get-CPCodeforcesProblem -ContestId $info.ContestId -Index $info.Index -TimeoutSec $TimeoutSec
                 $res.Name = $p.name
                 $res.Id = $info.Id
-                if ($p.PSObject.Properties['rating'] -and $p.rating) { $res.Difficulty = [string]$p.rating }
+                if ($p.rating) { $res.Difficulty = [string]$p.rating }
                 $res.Topics = @($p.tags | Where-Object { $_ -and -not $_.StartsWith('*') })
             }
             'LeetCode' {
@@ -308,7 +304,7 @@ function Get-CPProblemMetadata {
                 $res.Id = $info.Id
             }
             'CSES' {
-                $t = Get-CPPageTitle -Url $Link -TimeoutSec $TimeoutSec
+                $t = Get-CPPageTitle -Url $Link -TimeoutSec ([Math]::Max($TimeoutSec, 15))
                 $res.Name = ($t -replace '^CSES\s*-\s*', '').Trim()
                 $res.Id = $info.Id
             }
@@ -321,9 +317,83 @@ function Get-CPProblemMetadata {
         $res.Ok = [bool]$res.Name
         if (-not $res.Ok) { $res.Message = 'No problem name found online.' } else { $res.Message = "Fetched from $($info.Platform)." }
     } catch {
-        $res.Message = "Online lookup failed: $($_.Exception.Message)"
+        $res.Message = "Online lookup failed: $(Get-CPWebError $_)"
     }
     return $res
+}
+
+function ConvertFrom-CPJson {
+    <# ConvertFrom-Json without the 2 MB limit of Windows PowerShell 5.1. #>
+    param([Parameter(Mandatory)][string]$Text)
+    if ($PSVersionTable.PSVersion.Major -ge 6) { return ($Text | ConvertFrom-Json) }
+    Add-Type -AssemblyName System.Web.Extensions
+    $ser = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+    $ser.MaxJsonLength = [int]::MaxValue
+    return $ser.DeserializeObject($Text)
+}
+
+function Get-CPCodeforcesProblem {
+    <#
+      Finds a Codeforces problem and returns @{ name; rating; tags }.
+      Tries the full problem list first (cached for a day as a small TSV in
+      %APPDATA%\CPSolutionSaver), then the contest's standings (needed for
+      problems that are not in the problemset, e.g. gym).
+    #>
+    param([string]$ContestId, [string]$Index, [int]$TimeoutSec = 8)
+    $errors = @()
+    $find = {
+        param($lines)
+        foreach ($ln in $lines) {
+            $c = $ln -split "`t"
+            if ($c.Count -ge 5 -and $c[0] -eq $ContestId -and $c[1] -eq $Index) {
+                return [pscustomobject]@{ name = $c[2]; rating = $c[3]; tags = @($c[4] -split ';' | Where-Object { $_ }) }
+            }
+        }
+        return $null
+    }
+    if ([int]$ContestId -lt 100000) {
+        try {
+            $cache = Join-Path (Get-CPDataDir) 'codeforces-problems.tsv'
+            $p = $null
+            if ((Test-Path $cache) -and ((Get-Date) - (Get-Item $cache).LastWriteTime).TotalHours -lt 24) {
+                $p = & $find ([IO.File]::ReadAllLines($cache))
+            }
+            if (-not $p) {
+                $resp = Invoke-WebRequest -Uri 'https://codeforces.com/api/problemset.problems' -UseBasicParsing -TimeoutSec ([Math]::Max($TimeoutSec, 25)) -Headers @{ 'User-Agent' = 'CPSolutionSaver' }
+                $all = ConvertFrom-CPJson $resp.Content
+                if ($all.status -ne 'OK') { throw "$($all.comment)" }
+                $sb = New-Object System.Text.StringBuilder
+                foreach ($q in $all.result.problems) {
+                    $nm = ([string]$q.name) -replace "[`t`r`n]", ' '
+                    [void]$sb.Append([string]$q.contestId).Append("`t").Append([string]$q.index).Append("`t").Append($nm).Append("`t").Append([string]$q.rating).Append("`t").Append((@($q.tags) -join ';')).Append("`n")
+                }
+                Write-CPTextFile -Path $cache -Text $sb.ToString()
+                $p = & $find ($sb.ToString() -split "`n")
+            }
+            if ($p) { return $p }
+            $errors += 'not in the problemset list'
+        } catch { $errors += "problemset: $(Get-CPWebError $_)" }
+    }
+    try {
+        $api = "https://codeforces.com/api/contest.standings?contestId=$ContestId&from=1&count=1"
+        $j = Invoke-RestMethod -Uri $api -TimeoutSec $TimeoutSec -Headers @{ 'User-Agent' = 'CPSolutionSaver' }
+        if ($j.status -ne 'OK') { throw "$($j.comment)" }
+        $q = $j.result.problems | Where-Object { $_.index -eq $Index } | Select-Object -First 1
+        if ($q) { return [pscustomobject]@{ name = $q.name; rating = [string]$q.rating; tags = @($q.tags) } }
+        $errors += "problem $Index not in contest $ContestId"
+    } catch { $errors += "standings: $(Get-CPWebError $_)" }
+    throw ('Codeforces lookup failed (' + ($errors -join '; ') + ')')
+}
+
+function Get-CPWebError($err) {
+    $m = $err.Exception.Message
+    if ($err.ErrorDetails -and $err.ErrorDetails.Message) {
+        $d = $err.ErrorDetails.Message
+        try { $c = ($d | ConvertFrom-Json).comment; if ($c) { $d = $c } } catch { }
+        if ($d.Length -gt 200) { $d = $d.Substring(0, 200) }
+        $m = "$m $d"
+    }
+    return $m
 }
 
 function Merge-CPTopics {
@@ -453,8 +523,10 @@ function Get-CPAllSolutions {
     param([Parameter(Mandatory)][string]$RepoPath)
     $root = (Resolve-Path -LiteralPath $RepoPath).ProviderPath
     $list = New-Object System.Collections.Generic.List[object]
-    $files = Get-ChildItem -LiteralPath $root -Recurse -File -Include *.cpp, *.cc, *.cxx, *.c, *.py, *.java -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch '[\\/]Index[\\/]' }
+    # (-Include is unreliable with -LiteralPath on Windows PowerShell 5.1, so filter by extension here)
+    $exts = @('.cpp', '.cc', '.cxx', '.c', '.py', '.java')
+    $files = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $exts -contains $_.Extension.ToLowerInvariant() -and $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch '[\\/]Index[\\/]' }
     foreach ($file in $files) {
         $rel = $file.FullName.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/'
         $text = ''

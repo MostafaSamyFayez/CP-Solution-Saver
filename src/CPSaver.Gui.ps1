@@ -828,6 +828,11 @@ function Show-CPMainWindow {
             if (Show-CPTemplatePicker -Config $Config -ConfigPath $ConfigPath -Language ((Get-CPLanguage $Config.MainCppPath).Name)) { $ui.Log.Clear(); & $fillFiles; & $loadFile $false; & $log 'Template loaded (old file backed up).' }
         }
     })
+    $ui.Browse.Add_Click({
+        Invoke-CPSafe -What 'Solved problems' {
+            Show-CPBrowser -Config $Config -OnLoaded { param($p) $ui.Log.Clear(); & $fillFiles; & $loadFile $false; & $log "Loaded $p into $([IO.Path]::GetFileName($Config.MainCppPath)) (old file backed up)." }
+        }
+    })
     $ui.Save.Add_Click({ Invoke-CPSafe -What 'Saving' $doSave })
     $f.Add_FormClosing({ param($s, $e) if ($st.Busy) { $e.Cancel = $true; $ui.Status.Text = 'Please wait - still saving...' } })
     $ui.Fetch.Add_Click({ Invoke-CPSafe -What 'Online lookup' $doFetch })

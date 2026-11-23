@@ -238,5 +238,13 @@ finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
 
+# Every button in the windows must do something (a missing click handler is easy to miss)
+Write-Host "`n[12] GUI buttons are wired" -ForegroundColor Cyan
+$guiText = Get-Content -Raw -LiteralPath (Join-Path $SrcDir 'CPSaver.Gui.ps1')
+foreach ($m in [regex]::Matches($guiText, '\$ui\.(\w+) = New-CPButton')) {
+    $bn = $m.Groups[1].Value
+    Check "button '$bn' has a click handler" ($guiText -match ('\$ui\.' + $bn + '\.Add_Click'))
+}
+
 Write-Host ("`n{0} passed, {1} failed" -f $script:pass, $script:fail) -ForegroundColor $(if ($script:fail) { 'Red' } else { 'Green' })
 if ($script:fail) { exit 1 } else { exit 0 }

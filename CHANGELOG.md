@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.1 - 2026-11-23
+
+### Fixed
+- The **Solved problems...** button in the save window did nothing (its click handler was lost
+  in the 2.3.0 rewrite). The self-tests now check that every window button is wired up.
+
 ## 2.3.0 - 2026-11-23
 
 ### Faster

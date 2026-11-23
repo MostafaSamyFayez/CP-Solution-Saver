@@ -45,13 +45,26 @@ else {
 
 # 2. stop a running copy (its files are in use), then copy ----------------------
 function Stop-CPHost {
-    try { $ev = [System.Threading.EventWaitHandle]::OpenExisting('Local\CPSolutionSaver_cmd_exit') } catch { return $false }
-    [void]$ev.Set(); $ev.Dispose()
-    for ($i = 0; $i -lt 60; $i++) {
-        try { $m = [System.Threading.Mutex]::OpenExisting('Local\CPSolutionSaver_Host'); $m.Dispose(); Start-Sleep -Milliseconds 100 } catch { break }
-    }
-    Start-Sleep -Milliseconds 300
-    return $true
+    # 1. ask the tray app to exit
+    $asked = $false
+    try {
+        $ev = [System.Threading.EventWaitHandle]::OpenExisting('Local\CPSolutionSaver_cmd_exit'); [void]$ev.Set(); $ev.Dispose(); $asked = $true
+        for ($i = 0; $i -lt 60; $i++) {
+            try { $m = [System.Threading.Mutex]::OpenExisting('Local\CPSolutionSaver_Host'); $m.Dispose(); Start-Sleep -Milliseconds 100 } catch { break }
+        }
+    } catch { }
+    # 2. make sure no copy of it (including test copies) still has the files open
+    $left = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like '*CPSaver.ps1*-Tray*' })
+    foreach ($p in $left) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $asked = $true } catch { } }
+    if ($asked) { Start-Sleep -Milliseconds 500 }
+    return $asked
+}
+function Remove-OrRename([string]$Path) {
+    # a DLL/EXE that is still loaded cannot be deleted, but it can be renamed out of the way
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    try { Remove-Item -LiteralPath $Path -Force -ErrorAction Stop }
+    catch { Rename-Item -LiteralPath $Path -NewName ((Split-Path $Path -Leaf) + '.old-' + [DateTime]::Now.Ticks) -ErrorAction SilentlyContinue }
 }
 if (Stop-CPHost) { Ok 'Stopped the running CP Solution Saver (tray) to update it.' }
 
@@ -92,7 +105,8 @@ if ($PSVersionTable.PSVersion.Major -le 5) {
     Step 'Building the fast launcher'
     try {
         $dll = Join-Path $InstallDir 'CPSaver.Native.dll'
-        foreach ($old in @($dll, $launcherExe)) { if (Test-Path $old) { Remove-Item $old -Force } }
+        Get-ChildItem -LiteralPath $InstallDir -Filter '*.old-*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        foreach ($old in @($dll, $launcherExe)) { Remove-OrRename $old }
         Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $src 'native\CPSaverNative.cs'))) -ReferencedAssemblies System.Windows.Forms -OutputAssembly $dll -OutputType Library
         Add-Type -TypeDefinition ([IO.File]::ReadAllText((Join-Path $src 'native\CPSaverLauncher.cs'))) -OutputAssembly $launcherExe -OutputType WindowsApplication
         $nativeOk = (Test-Path $dll) -and (Test-Path $launcherExe)

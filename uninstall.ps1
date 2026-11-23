@@ -13,6 +13,8 @@ try {
     Start-Sleep -Milliseconds 300
     Write-Host 'Stopped CP Solution Saver (tray).'
 } catch { }
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*CPSaver.ps1*-Tray*' } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force } catch { } }
 $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'CP Solution Saver.lnk'
 if (Test-Path -LiteralPath $startup) { Remove-Item -LiteralPath $startup -Force; Write-Host "Removed $startup" }
 $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'CP Solution Saver'

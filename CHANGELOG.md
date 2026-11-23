@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.3.0 - 2026-11-23
+
+### Faster
+- **Tray app**: a small background helper keeps the app loaded and owns the shortcuts, so the
+  save window, quick save and solved problems open instantly. Measured on Windows: a shortcut
+  reaches the app in about 0.01 s (was 2-4 s); a cold start is about 0.5 s; quick save from key
+  press to result about 1 s plus the GitHub upload.
+- `CPSaverLauncher.exe` / `CPSaver.Native.dll`: built at install time from `src/native/*.cs`
+  with the C# compiler that ships with Windows (no extra downloads). Falls back to the previous
+  launcher if they can't be built.
+- Online lookups, saving/pushing and index rebuilds run in the background: windows never freeze.
+- The list of saved solutions is cached; files are re-read only when they change.
+
+### Looks and ease of use
+- New style: dark header with the app icon and your progress ("N problems solved | M this week"),
+  flat buttons, green main actions, cleaner Solved problems grid, sharp text on scaled screens.
+- New app icon (tray, windows, shortcuts).
+- Quick save: "Saving ..." box, then a result window with **Open on GitHub**.
+- New shortcut **Ctrl+Alt+Shift+B** for Solved problems; tray menu with every action.
+- Options: close the save window after saving (on), start with Windows (on).
+- The installer restarts a running tray app when updating; the uninstaller stops it.
+
+
 ## 2.2.0 - 2026-11-23
 
 ### Added

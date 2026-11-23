@@ -13,6 +13,10 @@ problem, **search your solved problems** and load one back.
 Made for a Visual Studio practice project on Windows (any editor works: the app only needs the
 file). C++, C and Python. No admin rights, no extra software besides Git.
 
+**Fast:** a tiny helper waits in the system tray, so the shortcuts open windows instantly
+(about 0.01 s to reach the app, instead of 2-4 s to start PowerShell every time), and online
+lookups and GitHub pushes run in the background so the window never freezes.
+
 ![Main window](docs/screenshot-main.png)
 
 ---
@@ -22,6 +26,7 @@ file). C++, C and Python. No admin rights, no extra software besides Git.
 1. [What it does](#what-it-does)
 2. [Install](#install)
 3. [Daily use](#daily-use)
+   - [Shortcuts and the tray icon](#shortcuts-and-the-tray-icon)
 4. [Quick save (no window)](#quick-save-no-window)
 5. [Solved problems: search and load back](#solved-problems-search-and-load-back)
 6. [Several languages (C++, C, Python)](#several-languages-c-c-python)
@@ -86,8 +91,9 @@ The installer:
 | Settings, templates, backups | `%APPDATA%\CPSolutionSaver\` (`config.json`, `templates\`, `backups\`) |
 | Start Menu | *CP Solution Saver* folder (app, Settings, Read me, Uninstall) |
 | Desktop | *CP Solution Saver* shortcut |
-| Hotkeys | **Ctrl+Alt+Shift+S** opens the app, **Ctrl+Alt+Shift+F** quick save (no window) |
-| Start Menu extras | *Quick Save*, *Solved problems*, *Settings*, *Read me*, *Uninstall* |
+| Tray app | `CPSaverLauncher.exe` + `CPSaver.Native.dll`, built at install time with the C# compiler that ships with Windows; starts with Windows (optional) |
+| Hotkeys | **Ctrl+Alt+Shift+S** save window, **Ctrl+Alt+Shift+F** quick save, **Ctrl+Alt+Shift+B** solved problems |
+| Start Menu extras | *Quick Save*, *Solved problems*, *Code templates*, *Settings*, *Read me*, *Uninstall* |
 | Practice project | `save_solution.bat` (opens the app), `quick_save.bat`, `solved_problems.bat` next to your `.sln` |
 
 You can also install non-interactively:
@@ -97,7 +103,26 @@ You can also install non-interactively:
 .\install.ps1 -PracticeFile "C:\path\to\main.cpp", "C:\path\to\main.py"     # several languages
 ```
 
-Updating = `git pull` in this repo and run `install.bat` again (your settings are kept).
+Updating = `git pull` in this repo and run `install.bat` again (your settings are kept; the
+running tray app is restarted automatically).
+
+## Shortcuts and the tray icon
+
+After installing, CP Solution Saver runs quietly in the **system tray** (the icon with `</>` and a
+green check, next to the clock; it may be under the `^` arrow). It uses almost no memory and keeps
+the app ready, so everything opens immediately.
+
+| Shortcut | Does |
+|---|---|
+| **Ctrl+Alt+Shift+S** | open the save window |
+| **Ctrl+Alt+Shift+F** | quick save (no window) |
+| **Ctrl+Alt+Shift+B** | open Solved problems |
+
+Right-click the tray icon for every action (save, quick save, solved problems, templates,
+settings, open the repo folder / GitHub, exit); double-click it to open the save window.
+The Start Menu entries, the Desktop shortcut and the `.bat` files next to your project do the
+same and are just as fast (if the tray app isn't running, the first one starts it in about half a
+second). Turn *Start with Windows* on or off in Settings.
 
 ## Daily use
 
@@ -106,7 +131,8 @@ Updating = `git pull` in this repo and run `install.bat` again (your settings ar
 2. Submit. When it's **Accepted**, save the file (**Ctrl+S** in Visual Studio).
 3. Press **Ctrl+Alt+Shift+S** (or double-click `save_solution.bat`, or the Desktop shortcut).
 4. Check the fields, add topics with **Pick...** if you like, then **Save & Push** (or Ctrl+S in the app).
-5. Done: the status line says *"... is on GitHub"*, and the practice file is reset to its template.
+5. Done: the status line says *"... is on GitHub"*, the practice file is reset to its template,
+   and the window closes itself (you can turn that off).
 
 The *Will be saved as* line tells you whether the problem is **new**, **solved before** (and when;
 it will be updated) or solved before **in another language**.
@@ -125,6 +151,9 @@ When the header is already right, skip the window:
 
    ![Quick save result](docs/screenshot-quicksave.png)
 
+   While it works, a small *"Saving main.cpp ..."* box shows that it's busy. **Open on GitHub**
+   opens the saved file on GitHub.
+
 Quick save uses the practice file you saved most recently, and exactly the same steps as the
 window (header + online lookup, duplicate check, indexes, pull/commit/push, reset to template)
 with your Settings defaults, and asks nothing. Other results:
@@ -132,7 +161,7 @@ with your Settings defaults, and asks nothing. Other results:
 | Message | Meaning |
 |---|---|
 | *Already saved: ...* | This exact solution is already in the repo; nothing was pushed. |
-| *Quick save failed* | No problem link / name, a push failed, etc. It explains why and offers to open the full window. |
+| *Quick save failed* | No problem link / name, a push failed, etc. It explains why and offers to open the full window (**Open CP Solution Saver**). |
 
 Prefer a Windows notification in the corner instead? Settings > *Quick save: show a Windows
 notification*. The full log of the last quick save is in `%APPDATA%\CPSolutionSaver\last-quick-save.log`.
@@ -290,7 +319,9 @@ Open **Settings** in the window or *CP Solution Saver - Settings* in the Start M
 - **Practice files** (one per language) and the solutions repo folder (plus *Clone* / *Create new GitHub repo*)
 - **Templates...**: choose the reset template per language, load or edit templates
 - Look up problems online (on by default)
-- Push after saving (on), update indexes (on), **reset the practice file after a successful save (on)**
+- Push after saving (on), update indexes (on), **reset the practice file after a successful save (on)**,
+  close the save window after saving (on)
+- **Start with Windows** (on): keeps the tray app running so the shortcuts are instant
 - Quick save: message box (default) or Windows notification
 - **Add Difficulty/Topics fields to my practice files' headers**: upgrades old headers without touching your code
 
@@ -351,7 +382,8 @@ your solutions repo is never touched. Settings are kept unless you run
 | *git push failed* | Your commit is saved locally. Run `git push` in the repo folder once to sign in, then use the app again. |
 | *Online lookup failed* | No internet or the site is slow; fill the fields by hand. Codeforces data is cached for a day. |
 | Wrong folder / name | Edit the fields in the window before saving, or set `Platform:` / `Problem ID:` in the header. |
-| Hotkey does nothing | Another app uses that key combination. Change it: right-click the Start Menu shortcut (*CP Solution Saver* or *Quick Save*) → Properties → Shortcut key. |
+| Hotkey does nothing | Is the tray icon there? If not, open CP Solution Saver from the Start Menu (it starts the tray app). If it says a shortcut is *used by another app*, use the tray menu or the Start Menu entries instead. |
+| Want to stop it running in the background | Right-click the tray icon > *Exit*, and untick *Start with Windows* in Settings. |
 | No quick-save notification | Only if you switched to notifications: Focus Assist may hide them. Switch back to the message box in Settings, or read `%APPDATA%\CPSolutionSaver\last-quick-save.log`. |
 | Loaded the wrong solution / template | Your previous file is in the **Backups** folder (Solved problems window). |
 | Visual Studio asks to reload main.cpp | Expected after a reset or a load; choose **Yes**. |
@@ -362,10 +394,13 @@ your solutions repo is never touched. Settings are kept unless you run
 ## Project layout
 
 ```
-src/CPSaver.ps1        entry point (window, console mode, rebuild index)
+src/CPSaver.ps1        entry point (window, console mode, quick save, tray host, rebuild index)
+src/CPSaver.Tray.ps1   tray host: hotkeys, tray menu, commands from the launcher
+src/native/*.cs        C# sources of CPSaverLauncher.exe and CPSaver.Native.dll (built by install.ps1)
 src/CPSaver.Core.psm1  all logic: header, languages, platforms, problem identity, online lookup,
                        saving, git, indexes, templates, quick save, backups
-src/CPSaver.Gui.ps1    Windows Forms window, settings, topic picker, templates, solved-problems browser, notifications
+src/CPSaver.Gui.ps1    Windows Forms windows (theme, save, settings, topics, templates, solved problems,
+                       result window), background jobs
 install.ps1 / .bat     per-user installer
 uninstall.ps1          uninstaller
 tests/Run-Tests.ps1    self-tests

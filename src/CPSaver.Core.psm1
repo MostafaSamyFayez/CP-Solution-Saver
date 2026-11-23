@@ -689,7 +689,7 @@ function Get-CPStats {
     param([Parameter(Mandatory)][string]$RepoPath)
     $all = @(Get-CPAllSolutions $RepoPath)
     $weekAgo = (Get-Date).AddDays(-7).ToString('yyyy-MM-dd')
-    $week = @($all | Where-Object { $_.DateSolved -ge $weekAgo }).Count
+    $week = @($all | Where-Object { $_.DateSolved -ge $weekAgo } | ForEach-Object { if ($_.Key) { $_.Key } else { $_.RelPath } } | Select-Object -Unique).Count
     $problems = @($all | ForEach-Object { if ($_.Key) { $_.Key } else { $_.RelPath } } | Select-Object -Unique).Count
     return @{ Files = $all.Count; Problems = $problems; ThisWeek = $week }
 }

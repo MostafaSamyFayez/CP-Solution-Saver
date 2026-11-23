@@ -65,6 +65,10 @@ function Get-CPAppIcon {
 }
 
 function Get-CPAppImage([int]$Size = 32) {
+    $png = Join-Path $script:CPGuiDir 'app.png'
+    if (Test-Path -LiteralPath $png) {
+        try { return [System.Drawing.Image]::FromStream((New-Object System.IO.MemoryStream(,[IO.File]::ReadAllBytes($png)))) } catch { }
+    }
     $ico = Get-CPAppIcon
     if (-not $ico) { return $null }
     try { return (New-Object System.Drawing.Icon($ico, $Size, $Size)).ToBitmap() } catch { return $ico.ToBitmap() }
@@ -124,13 +128,13 @@ function New-CPHeader {
     $pic.Size = New-Object System.Drawing.Size(40, 40); $pic.Location = New-Object System.Drawing.Point(14, 9)
     $pic.SizeMode = 'Zoom'; $pic.Image = Get-CPAppImage 48
     $t = New-Object System.Windows.Forms.Label
-    $t.Text = $Title; $t.Font = $script:CPFontHead; $t.ForeColor = [System.Drawing.Color]::White; $t.AutoSize = $true
+    $t.Text = $Title; $t.Font = $script:CPFontHead; $t.ForeColor = [System.Drawing.Color]::White; $t.AutoSize = $true; $t.UseMnemonic = $false
     $t.Location = New-Object System.Drawing.Point(62, 7)
     $s = New-Object System.Windows.Forms.Label
-    $s.Text = $Subtitle; $s.Font = $script:CPFontSmall; $s.ForeColor = [System.Drawing.Color]::FromArgb(201, 209, 217); $s.AutoSize = $true
+    $s.UseMnemonic = $false; $s.Text = $Subtitle; $s.Font = $script:CPFontSmall; $s.ForeColor = [System.Drawing.Color]::FromArgb(201, 209, 217); $s.AutoSize = $true
     $s.Location = New-Object System.Drawing.Point(64, 32)
     $r = New-Object System.Windows.Forms.Label
-    $r.Text = ''; $r.Font = $script:CPFontSmall; $r.ForeColor = [System.Drawing.Color]::FromArgb(201, 209, 217)
+    $r.UseMnemonic = $false; $r.Text = ''; $r.Font = $script:CPFontSmall; $r.ForeColor = [System.Drawing.Color]::FromArgb(201, 209, 217)
     $r.AutoSize = $false; $r.Dock = 'Right'; $r.Width = 330; $r.TextAlign = 'MiddleRight'
     $p.Controls.Add($r); $p.Controls.Add($pic); $p.Controls.Add($t); $p.Controls.Add($s)
     return @{ Panel = $p; Right = $r; Subtitle = $s }
@@ -261,9 +265,9 @@ function Show-CPResultDialog {
     $mark.Font = New-Object System.Drawing.Font('Segoe UI', 18, [System.Drawing.FontStyle]::Bold); $mark.ForeColor = [System.Drawing.Color]::White
     $mark.BackColor = $color; $mark.AutoSize = $false; $mark.Size = New-Object System.Drawing.Size(42, 42); $mark.TextAlign = 'MiddleCenter'
     $mark.Margin = New-Object System.Windows.Forms.Padding(0, 2, 14, 0)
-    $t = New-Object System.Windows.Forms.Label; $t.Text = $Title; $t.Font = $script:CPFontTitle; $t.ForeColor = $script:CPAccent
+    $t = New-Object System.Windows.Forms.Label; $t.UseMnemonic = $false; $t.Text = $Title; $t.Font = $script:CPFontTitle; $t.ForeColor = $script:CPAccent
     $t.AutoSize = $true; $t.MaximumSize = New-Object System.Drawing.Size(420, 0); $t.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 6)
-    $body = New-Object System.Windows.Forms.Label; $body.Text = (($Lines | Where-Object { $_ }) -join "`r`n")
+    $body = New-Object System.Windows.Forms.Label; $body.UseMnemonic = $false; $body.Text = (($Lines | Where-Object { $_ }) -join "`r`n")
     $body.Font = $script:CPFont; $body.ForeColor = $script:CPMuted; $body.AutoSize = $true; $body.MaximumSize = New-Object System.Drawing.Size(420, 0)
     $grid.Controls.Add($mark, 0, 0); $grid.SetRowSpan($mark, 2)
     $grid.Controls.Add($t, 1, 0); $grid.Controls.Add($body, 1, 1)
@@ -882,6 +886,7 @@ function Show-CPMainWindow {
     })
     $f.Add_Shown({
         Show-CPForeground $f
+        if (Get-Command Write-CPTrace -ErrorAction SilentlyContinue) { Write-CPTrace 'save window shown' }
         Open-CPPool
         $jobTimer.Start()
         & $fillFiles
@@ -989,7 +994,7 @@ function Show-CPBrowser {
         else { [void]$flt.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize))) }
     }
     $mkCombo = { $c = New-Object System.Windows.Forms.ComboBox; $c.DropDownStyle = 'DropDownList'; $c.Font = $script:CPFont; $c.Width = 150; $c.Anchor = [System.Windows.Forms.AnchorStyles]::Left; $c }
-    $b.Search = New-CPTextBox
+    $b.Search = New-CPTextBox; $b.Search.MinimumSize = New-Object System.Drawing.Size(220, 0)
     $b.Platform = & $mkCombo; $b.Topic = & $mkCombo; $b.Topic.Width = 180; $b.Diff = & $mkCombo; $b.Lang = & $mkCombo; $b.Lang.Width = 110
     $b.Clear = New-CPButton 'Clear'
     $flt.Controls.Add((New-CPLabel 'Search:'), 0, 0); $flt.Controls.Add($b.Search, 1, 0)

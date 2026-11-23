@@ -6,7 +6,7 @@
     - Copies the app to %LOCALAPPDATA%\Programs\CPSolutionSaver
     - Adds Start Menu + Desktop shortcuts (hotkey Ctrl+Alt+Shift+S)
     - Creates/updates your settings in %APPDATA%\CPSolutionSaver\config.json
-    - Optionally puts a "save_solution.bat" launcher next to your practice project
+    - Starts the app in the tray; on first run it shows a short welcome tour, then Settings
 
 .EXAMPLE
     .\install.bat
@@ -19,7 +19,7 @@ param(
     [string[]]$PracticeFile,
     [string]$RepoPath,
     [switch]$NoDesktopShortcut,
-    [switch]$NoPracticeLauncher,
+    [switch]$NoPracticeLauncher,   # kept for older scripts; no .bat files are created any more
     [switch]$NoStartup,
     [switch]$Quiet
 )
@@ -147,7 +147,10 @@ New-Shortcut (Join-Path $menu 'CP Solution Saver.lnk') 'open' 'Save an accepted 
 New-Shortcut (Join-Path $menu 'CP Solution Saver - Settings.lnk') 'settings' 'Change CP Solution Saver settings' ''
 New-Shortcut (Join-Path $menu 'CP Solution Saver - Quick Save.lnk') 'quick' 'Save and push your practice file with no window (Ctrl+Alt+Shift+F)' 'CTRL+ALT+SHIFT+F'
 New-Shortcut (Join-Path $menu 'CP Solution Saver - Solved problems.lnk') 'browse' 'Search solved problems and load one back (Ctrl+Alt+Shift+B)' ''
-if ($nativeOk) { New-Shortcut (Join-Path $menu 'CP Solution Saver - Code templates.lnk') 'templates' 'Choose and load code templates' '' }
+if ($nativeOk) {
+    New-Shortcut (Join-Path $menu 'CP Solution Saver - Code templates.lnk') 'templates' 'Choose and load code templates' ''
+    New-Shortcut (Join-Path $menu 'CP Solution Saver - How to use.lnk') 'welcome' 'A short tour of CP Solution Saver and its shortcuts' ''
+}
 $u = $shell.CreateShortcut((Join-Path $menu 'Uninstall CP Solution Saver.lnk'))
 $u.TargetPath = Join-Path $InstallDir 'uninstall.bat'; $u.WorkingDirectory = $env:TEMP; $u.Save()
 $r = $shell.CreateShortcut((Join-Path $menu 'Read me.lnk'))
@@ -191,7 +194,11 @@ Ok "Settings file: $cfgPath"
 Ok "Templates    : $tplDir ($(@(Get-CPTemplates).Count) templates)"
 
 $problems = @(Test-CPConfig $cfg)
-if ($problems.Count -and -not $Quiet) {
+if ($problems.Count -and $nativeOk) {
+    # the tray app shows the welcome tour and then Settings on its first start (step 6)
+    Ok 'Not set up yet: the welcome window will guide you through it in a moment.'
+    $problems = @()
+} elseif ($problems.Count -and -not $Quiet) {
     Warn 'Some settings are missing - opening the Settings window...'
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File (Join-Path $InstallDir 'CPSaver.ps1') -Settings
     $cfg = Get-CPConfig $cfgPath
@@ -200,25 +207,10 @@ if ($problems.Count -and -not $Quiet) {
 if ($problems.Count) { $problems | ForEach-Object { Warn $_ }; Warn 'Open "CP Solution Saver - Settings" from the Start Menu to fix this.' }
 else { foreach ($p in @($cfg.PracticeFiles)) { Ok "Practice file : $p" }; Ok "Solutions repo: $($cfg.RepoPath)" }
 
-# 5. launcher next to the practice project ------------------------------------
-if (-not $NoPracticeLauncher -and $cfg.MainCppPath -and (Test-Path -LiteralPath $cfg.MainCppPath)) {
-    Step 'Adding save_solution.bat next to your practice project'
-    $dir = Split-Path $cfg.MainCppPath -Parent
-    for ($i = 0; $i -lt 2; $i++) {
-        if (Get-ChildItem -LiteralPath $dir -Filter *.sln -ErrorAction SilentlyContinue) { break }
-        $parent = Split-Path $dir -Parent; if (-not $parent) { break }; $dir = $parent
-    }
-    if (-not (Get-ChildItem -LiteralPath $dir -Filter *.sln -ErrorAction SilentlyContinue)) { $dir = Split-Path $cfg.MainCppPath -Parent }
-    $vbsPath = Join-Path $InstallDir 'CPSaver.vbs'
-    $mk = { param($cmd, $vbsArgs) if ($nativeOk) { "start `"`" `"$launcherExe`" $cmd" } else { "start `"`" wscript.exe `"$vbsPath`" $vbsArgs" } }
-    $launcher = "@echo off`r`nREM Opens CP Solution Saver (installed in $InstallDir)`r`n$(& $mk 'open' '')`r`n"
-    [IO.File]::WriteAllText((Join-Path $dir 'save_solution.bat'), $launcher, [Text.Encoding]::ASCII)
-    $quick = "@echo off`r`nREM Quick save: saves and pushes your practice file with no window, then shows the result`r`n$(& $mk 'quick' '-Quick')`r`n"
-    [IO.File]::WriteAllText((Join-Path $dir 'quick_save.bat'), $quick, [Text.Encoding]::ASCII)
-    $browse = "@echo off`r`nREM Search your solved problems and load one back`r`n$(& $mk 'browse' '-Browse')`r`n"
-    [IO.File]::WriteAllText((Join-Path $dir 'solved_problems.bat'), $browse, [Text.Encoding]::ASCII)
-    Ok "$(Join-Path $dir 'save_solution.bat')  (+ quick_save.bat, solved_problems.bat)"
-}
+# 5. older versions put .bat launchers next to the practice project: remove them -------
+#    (the shortcuts and the tray icon do the same job)
+$gone = @(Remove-CPPracticeLaunchers -Config $cfg)
+if ($gone.Count) { Step 'Cleaning up'; Ok "Removed the old .bat launchers next to your project: $(($gone | ForEach-Object { Split-Path $_ -Leaf }) -join ', ')" }
 
 # 6. start the tray app so the shortcuts work right away ------------------------
 if ($nativeOk -and -not $Quiet) {
@@ -229,5 +221,5 @@ if ($nativeOk -and -not $Quiet) {
 }
 
 Write-Host "`nInstalled CP Solution Saver $(Get-CPAppVersion)." -ForegroundColor Green
-Write-Host 'Open it with:  Ctrl+Alt+Shift+S,  the Desktop / Start Menu shortcut,  or save_solution.bat next to your project.' -ForegroundColor Green
-Write-Host 'Quick save (no window): Ctrl+Alt+Shift+F or quick_save.bat.   Browse solved problems: solved_problems.bat or the button in the app.' -ForegroundColor Green
+Write-Host 'Shortcuts:  Ctrl+Alt+Shift+S save window   |   Ctrl+Alt+Shift+F quick save   |   Ctrl+Alt+Shift+B solved problems' -ForegroundColor Green
+Write-Host 'Everything else: right-click the CP Solution Saver icon in the tray (next to the clock).' -ForegroundColor Green

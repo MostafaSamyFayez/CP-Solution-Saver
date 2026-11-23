@@ -26,7 +26,7 @@ function Start-CPTray {
         'Ctrl+Alt+Shift+F' = $hostWin.AddHotkey('quick', $mods, [System.Windows.Forms.Keys]::F)
         'Ctrl+Alt+Shift+B' = $hostWin.AddHotkey('browse', $mods, [System.Windows.Forms.Keys]::B)
     }
-    foreach ($c in @('open', 'quick', 'browse', 'templates', 'settings', 'exit')) { $hostWin.ListenFor($c) }
+    foreach ($c in @('open', 'quick', 'browse', 'templates', 'settings', 'welcome', 'exit')) { $hostWin.ListenFor($c) }
     $failed = @($hk.Keys | Where-Object { -not $hk[$_] })
     if ($failed.Count) { Write-CPTrace "hotkeys already used by another app: $($failed -join ', ')" }
 
@@ -55,6 +55,7 @@ function Start-CPTray {
     & $addItem 'Open repo folder' 'folder'
     & $addItem 'Open repo on GitHub' 'web'
     [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    & $addItem 'How to use...' 'welcome'
     & $addItem 'Exit' 'exit'
     $icon.ContextMenuStrip = $menu
     $icon.Add_MouseDoubleClick({ & $dispatch 'open' })
@@ -96,7 +97,11 @@ function Start-CPTray {
             'exit' { [System.Windows.Forms.Application]::Exit(); return }
             'tray' { return }
             'folder' { $cfg = Get-CPConfig $tray.ConfigPath; if ($cfg.RepoPath) { Start-Process explorer.exe -ArgumentList "`"$($cfg.RepoPath)`"" }; return }
-            'web' { $cfg = Get-CPConfig $tray.ConfigPath; $u = Get-CPRepoWebUrl $cfg.RepoPath; if ($u) { Start-Process $u }; return }
+            'web' {
+                $cfg = Get-CPConfig $tray.ConfigPath; $u = $null; try { $u = Get-CPRepoWebUrl $cfg.RepoPath } catch { }
+                if ($u) { Start-Process $u } else { $icon.ShowBalloonTip(5000, 'Not on GitHub yet', 'Your solutions folder is not connected to GitHub. Open Settings > Connect this folder to GitHub.', 'Info') }
+                return
+            }
         }
         if ($tray.Busy -or $tray.Quick) {
             # a window is already open: bring it to the front instead of opening another one
@@ -105,8 +110,17 @@ function Start-CPTray {
             return
         }
         if ($c -eq 'quick') {
-            $tray.Quick = $true
             $cfg = Get-CPConfig $tray.ConfigPath
+            if (@(Test-CPConfig $cfg).Count) {
+                # not set up yet: the tour / settings instead of an error
+                $tray.Busy = $true
+                try { [void](Start-CPFirstRun -Config $cfg -ConfigPath $tray.ConfigPath) } finally { $tray.Busy = $false }
+                return
+            }
+            $tray.Busy = $true
+            try { $idOk = Confirm-CPGitIdentity $cfg.RepoPath } finally { $tray.Busy = $false }
+            if (-not $idOk) { return }
+            $tray.Quick = $true
             $file = Get-CPActivePracticeFile $cfg
             $name = if ($file) { [IO.Path]::GetFileName($file) } else { 'solution' }
             $tray.QuickBusy = Show-CPBusy "Saving $name ..."
@@ -125,12 +139,13 @@ function Start-CPTray {
         $tray.Busy = $true
         try {
             $cfg = Get-CPConfig $tray.ConfigPath
+            if ($c -in @('open', 'browse') -and (@(Test-CPConfig $cfg).Count -or -not $cfg.TutorialShown)) {
+                if (-not (Start-CPFirstRun -Config $cfg -ConfigPath $tray.ConfigPath)) { return }
+            }
             switch ($c) {
                 'open'      { Show-CPMainWindow -Config $cfg -ConfigPath $tray.ConfigPath }
-                'browse'    {
-                    if (@(Test-CPConfig $cfg).Count) { Show-CPSettingsDialog -Config $cfg -ConfigPath $tray.ConfigPath -Intro 'Set up your practice file and solutions repo first.' | Out-Null }
-                    Show-CPBrowser -Config $cfg
-                }
+                'browse'    { Show-CPBrowser -Config $cfg }
+                'welcome'   { [void](Start-CPFirstRun -Config $cfg -ConfigPath $tray.ConfigPath -Force) }
                 'templates' { Show-CPTemplatePicker -Config $cfg -ConfigPath $tray.ConfigPath | Out-Null }
                 'settings'  { Show-CPSettingsDialog -Config $cfg -ConfigPath $tray.ConfigPath | Out-Null }
             }
@@ -160,7 +175,15 @@ function Start-CPTray {
     $startTimer.Interval = 30
     $startTimer.Add_Tick({
         $startTimer.Stop()
-        if ($Command -and $Command -ne 'tray') { & $dispatch $Command }
+        $cfg0 = Get-CPConfig $tray.ConfigPath
+        if (-not $cfg0.TutorialShown) {
+            # first run: welcome tour, then settings if needed, then the command that started us (if any)
+            $tray.Busy = $true
+            try { $ready = Start-CPFirstRun -Config $cfg0 -ConfigPath $tray.ConfigPath } catch { Write-CPTrace "first run: $($_.Exception.Message)"; $ready = $false } finally { $tray.Busy = $false }
+            if ($ready) { $icon.ShowBalloonTip(5000, 'CP Solution Saver is ready', 'Ctrl+Alt+Shift+S save   |   F quick save   |   B solved problems', 'Info') }
+            if ($ready -and $Command -and $Command -notin @('tray', 'welcome')) { & $dispatch $Command }
+        }
+        elseif ($Command -and $Command -ne 'tray') { & $dispatch $Command }
         else {
             $msg = 'Ctrl+Alt+Shift+S save   |   F quick save   |   B solved problems'
             if ($failed.Count) { $msg = "Ready. These shortcuts are used by another app: $($failed -join ', '). Use the tray menu." }

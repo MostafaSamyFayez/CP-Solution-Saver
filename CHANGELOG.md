@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.4.0 - 2026-11-23
+
+### Easier for new users
+- **Welcome tour** on first run: what the app does, the header, the three shortcuts, finding solutions
+  again, and what to set up. See it again from the tray menu (*How to use...*), the *How to use*
+  button in the window, or the Start Menu.
+- **Git name and email**: if Git doesn't know them yet, a small window asks for them before the first
+  save (and saves them with `git config --global`), instead of the save failing.
+- **Any empty folder works as the solutions folder**: it becomes a new local repo automatically (in
+  Settings and on the first save). A folder that already has files is only turned into a repo if you agree.
+- **Connect this folder to GitHub...** (Settings): links a local-only solutions folder to a new (or your
+  own empty) GitHub repo and uploads everything saved so far.
+- If you use a shortcut before setting up, you get the tour / Settings instead of an error.
+
+### Fewer files
+- No more `save_solution.bat`, `quick_save.bat`, `solved_problems.bat` next to your project: the
+  shortcuts, the tray icon and the Start Menu do the same. The installer removes the ones older
+  versions made (only those; a `.bat` you wrote yourself is never touched).
+
+### Tests
+- 20+ new checks: empty-folder repos, connecting to a remote later, the name/email setup, cleaning up
+  the old launchers, the tour flag, and a syntax check of every script.
+
 ## 2.3.2 - 2026-11-23
 
 ### Works without GitHub

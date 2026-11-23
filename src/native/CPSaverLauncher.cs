@@ -1,7 +1,7 @@
-// CPSaverLauncher.cs - the tiny program the shortcuts and .bat files run.
+// CPSaverLauncher.cs - the tiny program the shortcuts run.
 // Compiled by install.ps1 into CPSaverLauncher.exe (no console window).
 //
-//   CPSaverLauncher.exe [open|quick|browse|templates|settings|tray]
+//   CPSaverLauncher.exe [open|quick|browse|templates|settings|welcome|tray]
 //
 // If the tray host is already running, it just signals it through a named
 // event and exits (instant). Otherwise it starts the host (hidden PowerShell)

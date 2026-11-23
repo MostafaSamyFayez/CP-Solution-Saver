@@ -70,18 +70,29 @@ lookups and GitHub pushes run in the background so the window never freezes.
 
 ## Install
 
-Requirements: Windows 10/11 and [Git for Windows](https://git-scm.com/download/win)
-(already signed in to GitHub, i.e. `git push` works). PowerShell 5.1 is built into Windows.
+Requirements: Windows 10/11 and [Git for Windows](https://git-scm.com/download/win) (default options).
+PowerShell 5.1 is built into Windows. A GitHub account is **optional**.
 
 1. Get this repo: `git clone https://github.com/MostafaSamyFayez/CP-Solution-Saver.git`
    (or *Code → Download ZIP* and unzip).
-2. Double-click **`install.bat`**.
-3. If it can't find your settings yet, the **Settings** window opens. Choose:
+2. Double-click **`install.bat`** (if Windows SmartScreen appears: *More info* > *Run anyway*).
+3. A short **welcome tour** explains the header and the shortcuts, then **Settings** opens. Choose:
    - **Practice files**: the file you solve problems in, one per language (`main.cpp`, and if you
      like `main.c`, `main.py`).
-   - **Solutions repo folder**: your local clone of the solutions repo.
-     No repo yet? Click **Create a new GitHub repo...** (uses Git's existing GitHub sign-in)
-     or **Clone a GitHub repo...**.
+   - **Solutions folder**: **any empty folder** (use *Make New Folder* in the folder picker). It becomes
+     a new local repo automatically. Already have a solutions repo on GitHub? Use **Clone a GitHub repo...**.
+     Want one on GitHub right away? **Create a new GitHub repo...**.
+4. The first time you save, if Git doesn't know your **name and email** yet, a small window asks for
+   them (one time per PC; Git records them with every save).
+
+See the tour again any time: tray icon > **How to use...** (or the *How to use* button in the window).
+
+### Without GitHub, and connecting it later
+
+Everything works on your PC alone: saves are kept in the local repo (the result says
+*commit kept locally*). When you want them on GitHub, open **Settings > Connect this folder to
+GitHub...**: it creates a new repo on your account (or uses an empty one you made) and uploads
+everything saved so far; from then on every save uploads automatically.
 
 The installer:
 
@@ -93,8 +104,7 @@ The installer:
 | Desktop | *CP Solution Saver* shortcut |
 | Tray app | `CPSaverLauncher.exe` + `CPSaver.Native.dll`, built at install time with the C# compiler that ships with Windows; starts with Windows (optional) |
 | Hotkeys | **Ctrl+Alt+Shift+S** save window, **Ctrl+Alt+Shift+F** quick save, **Ctrl+Alt+Shift+B** solved problems |
-| Start Menu extras | *Quick Save*, *Solved problems*, *Code templates*, *Settings*, *Read me*, *Uninstall* |
-| Practice project | `save_solution.bat` (opens the app), `quick_save.bat`, `solved_problems.bat` next to your `.sln` |
+| Start Menu extras | *Quick Save*, *Solved problems*, *Code templates*, *How to use*, *Settings*, *Read me*, *Uninstall* |
 
 You can also install non-interactively:
 
@@ -120,8 +130,7 @@ the app ready, so everything opens immediately.
 
 Right-click the tray icon for every action (save, quick save, solved problems, templates,
 settings, open the repo folder / GitHub, exit); double-click it to open the save window.
-The Start Menu entries, the Desktop shortcut and the `.bat` files next to your project do the
-same and are just as fast (if the tray app isn't running, the first one starts it in about half a
+The Start Menu entries and the Desktop shortcut do the same and are just as fast (if the tray app isn't running, the first one starts it in about half a
 second). Turn *Start with Windows* on or off in Settings.
 
 ## Daily use
@@ -129,7 +138,7 @@ second). Turn *Start with Windows* on or off in Settings.
 1. Solve the problem in your practice file. Fill at least the **link** in the header (required;
    the name, difficulty and topics are fetched for Codeforces/LeetCode).
 2. Submit. When it's **Accepted**, save the file (**Ctrl+S** in Visual Studio).
-3. Press **Ctrl+Alt+Shift+S** (or double-click `save_solution.bat`, or the Desktop shortcut).
+3. Press **Ctrl+Alt+Shift+S** (or double-click the tray icon, or the Desktop shortcut).
 4. Check the fields, add topics with **Pick...** if you like, then **Save & Push** (or Ctrl+S in the app).
 5. Done: the status line says *"... is on GitHub"*, the practice file is reset to its template,
    and the window closes itself (you can turn that off).
@@ -146,7 +155,7 @@ If the file changed after the window opened, it tells you; the newest code on di
 When the header is already right, skip the window:
 
 1. Save your practice file (Ctrl+S).
-2. Press **Ctrl+Alt+Shift+F** (or double-click `quick_save.bat`, or Start Menu > *CP Solution Saver - Quick Save*).
+2. Press **Ctrl+Alt+Shift+F** (or tray icon > *Quick save*, or Start Menu > *CP Solution Saver - Quick Save*).
 3. A message box in the middle of the screen shows the result, for example:
 
    ![Quick save result](docs/screenshot-quicksave.png)
@@ -168,8 +177,8 @@ notification*. The full log of the last quick save is in `%APPDATA%\CPSolutionSa
 
 ## Solved problems: search and load back
 
-Open it with the **Solved problems...** button in the window, Start Menu > *CP Solution Saver -
-Solved problems*, or `solved_problems.bat`.
+Open it with **Ctrl+Alt+Shift+B**, the **Solved problems...** button in the window, the tray menu, or
+Start Menu > *CP Solution Saver - Solved problems*.
 
 ![Solved problems browser](docs/screenshot-browser.png)
 
@@ -389,7 +398,7 @@ your solutions repo is never touched. Settings are kept unless you run
 | Visual Studio asks to reload main.cpp | Expected after a reset or a load; choose **Yes**. |
 | Quick save used the wrong language | It uses the practice file saved most recently: save the one you mean (Ctrl+S) first. |
 | *The problem link is required* | Add `Problem Link: https://...` to the header; it's how the app knows which problem it is. |
-| "running scripts is disabled" | Use the shortcuts / `.bat` files: they pass `-ExecutionPolicy Bypass` for this app only. |
+| "running scripts is disabled" | Use the shortcuts / `install.bat`: they pass `-ExecutionPolicy Bypass` for this app only. |
 
 ## Project layout
 

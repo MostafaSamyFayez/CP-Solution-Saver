@@ -15,7 +15,7 @@
     CPSaver.ps1 -Settings          # open the settings window
     CPSaver.ps1 -Quick             # quick save: no window, just a notification with the result
     CPSaver.ps1 -Browse            # browse / search solved problems and load one into main.cpp
-    CPSaver.ps1 -Tray [-Command open|quick|browse|templates|settings]
+    CPSaver.ps1 -Tray [-Command open|quick|browse|templates|settings|welcome]
                                    # tray host: stays running, owns the hotkeys (started by CPSaverLauncher.exe)
 #>
 [CmdletBinding()]
@@ -83,6 +83,8 @@ if ($Quick) {
     $busy = $null
     if ($showUi) {
         . (Join-Path $PSScriptRoot 'CPSaver.Gui.ps1')
+        if (@(Test-CPConfig $config).Count) { if (-not (Start-CPFirstRun -Config $config -ConfigPath $ConfigPath)) { exit 2 } }
+        if (-not (Confirm-CPGitIdentity $config.RepoPath)) { exit 2 }
         $f0 = Get-CPActivePracticeFile $config
         $busy = Show-CPBusy "Saving $(if ($f0) { [IO.Path]::GetFileName($f0) } else { 'solution' }) ..."
     }
@@ -107,11 +109,12 @@ if ($Quick) {
 if (-not $Cli -and -not $RebuildIndex -and $isWindowsHost) {
     . (Join-Path $PSScriptRoot 'CPSaver.Gui.ps1')
     if ($Settings) { Show-CPSettingsDialog -Config $config -ConfigPath $ConfigPath | Out-Null }
-    elseif ($Browse) {
-        if (@(Test-CPConfig $config).Count) { Show-CPSettingsDialog -Config $config -ConfigPath $ConfigPath -Intro 'Set up your practice file and solutions repo first.' | Out-Null }
-        Show-CPBrowser -Config $config
+    else {
+        if (@(Test-CPConfig $config).Count -or -not $config.TutorialShown) {
+            if (-not (Start-CPFirstRun -Config $config -ConfigPath $ConfigPath)) { return }
+        }
+        if ($Browse) { Show-CPBrowser -Config $config } else { Show-CPMainWindow -Config $config -ConfigPath $ConfigPath }
     }
-    else { Show-CPMainWindow -Config $config -ConfigPath $ConfigPath }
     return
 }
 

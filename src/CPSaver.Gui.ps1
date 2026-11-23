@@ -289,6 +289,215 @@ function Show-CPResultDialog {
     return $result.Value
 }
 
+# ============================================================================
+#  First-time helpers: git name/email, solutions folder
+# ============================================================================
+function Show-CPGitIdentityDialog {
+    <# Asks for the name + email git records with each save and stores them (git config --global).
+       Returns $true when saved. #>
+    param([string]$Reason = '')
+    $f = New-CPForm 'CP Solution Saver - Git name and email' 560 330
+    $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.MinimizeBox = $false; $f.TopMost = $true
+    $hdr = New-CPHeader 'Tell Git who you are' 'One-time setup on this PC'
+    $grid = New-Object System.Windows.Forms.TableLayoutPanel
+    $grid.Dock = 'Fill'; $grid.ColumnCount = 2; $grid.Padding = New-Object System.Windows.Forms.Padding(16, 12, 16, 10)
+    [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    $text = 'Git saves a name and email with every solution you save (even without GitHub). ' +
+            'Use the email of your GitHub account if you want your saves linked to your profile.'
+    if ($Reason) { $text = "$Reason`r`n`r`n$text" }
+    $intro = New-CPLabel $text; $intro.MaximumSize = New-Object System.Drawing.Size(500, 0); $intro.ForeColor = $script:CPMuted
+    $grid.Controls.Add($intro, 0, 0); $grid.SetColumnSpan($intro, 2)
+    $cur = Get-CPGitIdentity
+    $grid.Controls.Add((New-CPLabel 'Name:'), 0, 1)
+    $nameBox = New-CPTextBox; $nameBox.Text = $(if ($cur.Name) { $cur.Name } else { $env:USERNAME })
+    $grid.Controls.Add($nameBox, 1, 1)
+    $grid.Controls.Add((New-CPLabel 'Email:'), 0, 2)
+    $mailBox = New-CPTextBox; $mailBox.Text = $cur.Email
+    $grid.Controls.Add($mailBox, 1, 2)
+    $err = New-CPLabel ''; $err.ForeColor = $script:CPRed; $err.MaximumSize = New-Object System.Drawing.Size(500, 0)
+    $grid.Controls.Add($err, 0, 3); $grid.SetColumnSpan($err, 2)
+    $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.FlowDirection = 'RightToLeft'; $btns.AutoSize = $true; $btns.Dock = 'Fill'
+    $ok = New-CPButton 'Save' 100; Set-CPPrimary $ok
+    $cancel = New-CPButton 'Cancel' 90; $cancel.DialogResult = 'Cancel'
+    $btns.Controls.Add($cancel); $btns.Controls.Add($ok)
+    $grid.Controls.Add($btns, 0, 4); $grid.SetColumnSpan($btns, 2)
+    $ok.Add_Click({
+        try { Set-CPGitIdentity -Name $nameBox.Text -Email $mailBox.Text; $f.DialogResult = 'OK'; $f.Close() }
+        catch { $err.Text = $_.Exception.Message }
+    })
+    $f.Controls.Add($grid); $f.Controls.Add($hdr.Panel)
+    $f.AcceptButton = $ok; $f.CancelButton = $cancel
+    $f.Add_Shown({ Show-CPForeground $f; if ($mailBox.Text) { $nameBox.Focus() } else { $mailBox.Focus() } })
+    $r = $f.ShowDialog(); $f.Dispose()
+    return ($r -eq 'OK')
+}
+
+function Confirm-CPGitIdentity {
+    <# $true if git knows the user's name + email (asks for them once if not). #>
+    param([string]$RepoPath)
+    if (-not (Test-CPGitAvailable)) { return $true }   # the save itself explains that git is missing
+    if ((Get-CPGitIdentity $RepoPath).Ok) { return $true }
+    return (Show-CPGitIdentityDialog -Reason 'Before your first save, Git needs your name and email.')
+}
+
+function Use-CPRepoFolder {
+    <# Checks a folder chosen for the solutions. An empty folder becomes a new local repo automatically;
+       a folder with files (not a repo) is turned into one only if the user agrees. Returns the path or $null. #>
+    param([string]$Path, [switch]$Quiet)
+    if (-not $Path) { return $null }
+    switch (Test-CPRepoFolder $Path) {
+        'repo'  { return $Path }
+        'empty' {
+            $full = Initialize-CPRepo $Path
+            if (-not $Quiet) {
+                [System.Windows.Forms.MessageBox]::Show("Created a new local repo in:`n$full`n`nYour solutions are saved here. To put them on GitHub later, use ""Connect to GitHub"" in Settings or the README steps.", 'CP Solution Saver', 'OK', 'Information') | Out-Null
+            }
+            return $full
+        }
+        'files' {
+            $a = [System.Windows.Forms.MessageBox]::Show("This folder is not a git repo yet and already has files in it:`n$Path`n`nTurn it into a repo for your solutions? (Its files are kept as they are.)`n`nTip: an empty folder is usually the better choice.", 'CP Solution Saver', 'YesNo', 'Question')
+            if ($a -eq 'Yes') { return (Initialize-CPRepo $Path) }
+            return $null
+        }
+    }
+    return $null
+}
+
+# ============================================================================
+#  Welcome tour (first run, and "How to use" in the tray menu)
+# ============================================================================
+function Show-CPWelcome {
+    <# A short paged tour. Returns $true if finished with "Set up now" / "Start". #>
+    param([switch]$NeedsSetup)
+    $f = New-CPForm 'Welcome to CP Solution Saver' 720 560
+    $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.MinimizeBox = $false
+    $hdr = New-CPHeader 'Welcome to CP Solution Saver' 'A quick tour - 5 short steps'
+    $f.BackColor = [System.Drawing.Color]::White
+
+    $keycap = {
+        param([string]$Keys, [string]$What)
+        $row = New-Object System.Windows.Forms.FlowLayoutPanel; $row.AutoSize = $true; $row.WrapContents = $false; $row.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 4)
+        foreach ($k in ($Keys -split '\+')) {
+            $kl = New-Object System.Windows.Forms.Label; $kl.Text = $k; $kl.AutoSize = $true; $kl.Font = $script:CPFontBold
+            $kl.BorderStyle = 'FixedSingle'; $kl.BackColor = $script:CPBg; $kl.Padding = New-Object System.Windows.Forms.Padding(6, 3, 6, 3)
+            $kl.Margin = New-Object System.Windows.Forms.Padding(0, 0, 4, 0); $row.Controls.Add($kl)
+        }
+        $wl = New-Object System.Windows.Forms.Label; $wl.Text = $What; $wl.AutoSize = $true; $wl.Font = $script:CPFont; $wl.UseMnemonic = $false
+        $wl.Margin = New-Object System.Windows.Forms.Padding(10, 4, 0, 0); $row.Controls.Add($wl)
+        return $row
+    }
+    $para = {
+        param([string]$Text, $Font = $script:CPFont, $Color = $script:CPAccent)
+        $l = New-Object System.Windows.Forms.Label; $l.Text = $Text; $l.AutoSize = $true; $l.Font = $Font; $l.ForeColor = $Color; $l.UseMnemonic = $false
+        $l.MaximumSize = New-Object System.Drawing.Size(640, 0); $l.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 8)
+        return $l
+    }
+    $code = {
+        param([string]$Text)
+        $t = New-Object System.Windows.Forms.TextBox; $t.Multiline = $true; $t.ReadOnly = $true; $t.Text = $Text; $t.Font = $script:CPFontMono
+        $t.BackColor = $script:CPBg; $t.BorderStyle = 'FixedSingle'; $t.Width = 640; $t.Height = 132; $t.TabStop = $false
+        $t.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 8)
+        return $t
+    }
+    $newPage = {
+        param([string]$Title)
+        $p = New-Object System.Windows.Forms.FlowLayoutPanel; $p.FlowDirection = 'TopDown'; $p.WrapContents = $false; $p.Dock = 'Fill'
+        $p.Padding = New-Object System.Windows.Forms.Padding(26, 18, 26, 6); $p.AutoScroll = $true; $p.Visible = $false
+        $p.Controls.Add((& $para $Title $script:CPFontTitle))
+        return $p
+    }
+
+    $pages = New-Object System.Collections.Generic.List[object]
+    # 1 - what it is
+    $p = & $newPage 'Save every accepted solution with one shortcut'
+    $p.Controls.Add((& $para 'You solve problems in one practice file (like main.cpp). When a solution is accepted, press a shortcut: CP Solution Saver copies it into your solutions folder as its own file (e.g. Codeforces/4A_Watermelon.cpp), keeps a README with your progress and indexes by topic and difficulty, and uploads it to GitHub if you connected one.'))
+    $p.Controls.Add((& $para 'It runs quietly in the tray (the icon next to the clock, bottom-right). Right-click the icon for everything; nothing needs to stay open.' $script:CPFont $script:CPMuted))
+    $pages.Add($p)
+    # 2 - the header
+    $p = & $newPage 'Write your solution with a small header'
+    $p.Controls.Add((& $para 'Put a comment like this at the top of your practice file. Only the Problem Link is required - it identifies the problem, so solving it again updates the same file instead of making a copy.'))
+    $p.Controls.Add((& $code "/*`r`n * Problem Name: Watermelon`r`n * Problem Link: https://codeforces.com/problemset/problem/4/A`r`n * Difficulty:   800`r`n * Topics:       math, brute force`r`n * Notes:        even and > 2`r`n */"))
+    $p.Controls.Add((& $para 'For Codeforces, LeetCode, AtCoder and CSES the name, difficulty and topics are filled in from the link automatically. C++, C and Python (# comments) are supported. The code templates already have this header.' $script:CPFont $script:CPMuted))
+    $pages.Add($p)
+    # 3 - save
+    $p = & $newPage 'Save it'
+    $p.Controls.Add((& $keycap 'Ctrl+Alt+Shift+S' 'Open the save window: check the details, then Save (Ctrl+S).'))
+    $p.Controls.Add((& $keycap 'Ctrl+Alt+Shift+F' 'Quick save: no window, just saves and shows the result.'))
+    $p.Controls.Add((& $para 'Saving the same problem again updates its file (nothing is duplicated). After a successful save your practice file is reset to a clean template, ready for the next problem - you can turn that off.' $script:CPFont $script:CPMuted))
+    $pages.Add($p)
+    # 4 - find again
+    $p = & $newPage 'Find and reuse your solutions'
+    $p.Controls.Add((& $keycap 'Ctrl+Alt+Shift+B' 'Solved problems: search by name, filter by platform, topic, difficulty or language.'))
+    $p.Controls.Add((& $para 'Pick one and press Enter to load it back into your practice file to review it (your current file is backed up first).'))
+    $p.Controls.Add((& $para 'Tray menu > Code templates: choose a starting template (competitive C++, fast I/O, multiple test cases, C, Python ...).' $script:CPFont $script:CPMuted))
+    $pages.Add($p)
+    # 5 - setup
+    $p = & $newPage $(if ($NeedsSetup) { 'One last thing: set it up' } else { 'You are all set' })
+    if ($NeedsSetup) {
+        $p.Controls.Add((& $para 'Next, choose:'))
+        $p.Controls.Add((& $para '1.  Your practice file - the main.cpp (or main.c / main.py) you solve problems in.'))
+        $p.Controls.Add((& $para '2.  A folder for your solutions - pick or make an empty folder; it becomes a repo automatically. Already have a solutions repo on GitHub? Use "Clone a GitHub repo...".'))
+        $p.Controls.Add((& $para 'GitHub is optional: everything works on your PC alone, and you can connect GitHub later.' $script:CPFont $script:CPMuted))
+    } else {
+        $p.Controls.Add((& $para 'Solve a problem, get Accepted, press Ctrl+Alt+Shift+F. That''s it.'))
+    }
+    $p.Controls.Add((& $para 'See this tour again any time: right-click the tray icon > How to use.' $script:CPFont $script:CPMuted))
+    $pages.Add($p)
+
+    $body = New-Object System.Windows.Forms.Panel; $body.Dock = 'Fill'
+    foreach ($pg in $pages) { $body.Controls.Add($pg) }
+
+    $bar = New-Object System.Windows.Forms.TableLayoutPanel; $bar.Dock = 'Bottom'; $bar.Height = 56; $bar.ColumnCount = 2
+    $bar.Padding = New-Object System.Windows.Forms.Padding(20, 8, 20, 10); $bar.BackColor = $script:CPBg
+    [void]$bar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$bar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    $step = New-Object System.Windows.Forms.Label; $step.AutoSize = $true; $step.ForeColor = $script:CPMuted; $step.Anchor = 'Left'; $step.Font = $script:CPFont
+    $nav = New-Object System.Windows.Forms.FlowLayoutPanel; $nav.FlowDirection = 'RightToLeft'; $nav.AutoSize = $true
+    $next = New-CPButton 'Next' 110; Set-CPPrimary $next
+    $back = New-CPButton 'Back' 90
+    $skip = New-CPButton 'Skip tour' 90
+    $nav.Controls.Add($next); $nav.Controls.Add($back); $nav.Controls.Add($skip)
+    $bar.Controls.Add($step, 0, 0); $bar.Controls.Add($nav, 1, 0)
+
+    $st = @{ Page = 0; Done = $false }
+    $show = {
+        for ($i = 0; $i -lt $pages.Count; $i++) { $pages[$i].Visible = ($i -eq $st.Page) }
+        $step.Text = "Step $($st.Page + 1) of $($pages.Count)"
+        $back.Enabled = ($st.Page -gt 0)
+        $last = ($st.Page -eq $pages.Count - 1)
+        $next.Text = $(if ($last) { if ($NeedsSetup) { 'Set up now' } else { 'Start' } } else { 'Next' })
+        $skip.Visible = -not $last
+    }
+    $next.Add_Click({ if ($st.Page -lt $pages.Count - 1) { $st.Page++; & $show } else { $st.Done = $true; $f.Close() } })
+    $back.Add_Click({ if ($st.Page -gt 0) { $st.Page--; & $show } })
+    $skip.Add_Click({ $st.Done = $true; $f.Close() })
+    $f.KeyPreview = $true
+    $f.Add_KeyDown({ param($s, $e) if ($e.KeyCode -eq 'Right') { $next.PerformClick() } elseif ($e.KeyCode -eq 'Left') { $back.PerformClick() } elseif ($e.KeyCode -eq 'Escape') { $f.Close() } })
+
+    $f.Controls.Add($body); $f.Controls.Add($bar); $f.Controls.Add($hdr.Panel)
+    $f.AcceptButton = $next
+    & $show
+    $f.Add_Shown({ Show-CPForeground $f; $next.Focus() })
+    [void]$f.ShowDialog(); $f.Dispose()
+    return $st.Done
+}
+
+function Start-CPFirstRun {
+    <# First run: the welcome tour once, then Settings if something is missing. Returns $true if the app is ready. #>
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$ConfigPath, [switch]$Force)
+    $needs = @(Test-CPConfig $Config).Count -gt 0
+    if ($Force -or -not $Config.TutorialShown) {
+        [void](Show-CPWelcome -NeedsSetup:$needs)
+        $Config.TutorialShown = $true
+        try { Save-CPConfig -Config $Config -Path $ConfigPath } catch { }
+    }
+    if ($needs -and -not $Force) {
+        [void](Show-CPSettingsDialog -Config $Config -ConfigPath $ConfigPath -Intro 'Choose your practice file and a folder for your solutions to get started.')
+    }
+    return (@(Test-CPConfig $Config).Count -eq 0)
+}
+
 function New-CPTextBox([switch]$Multiline) {
     $t = New-Object System.Windows.Forms.TextBox
     $t.Font = $script:CPFont
@@ -427,9 +636,12 @@ function Show-CPSettingsDialog {
     $repoBrowse = New-CPButton 'Browse...'
     $repoBrowse.Add_Click({
         $d = New-Object System.Windows.Forms.FolderBrowserDialog
-        $d.Description = 'Select your local clone of the solutions repo'
+        $d.Description = 'Choose a folder for your solutions. An empty folder becomes a new repo (use "Make New Folder"); or pick your existing solutions repo.'
+        $d.ShowNewFolderButton = $true
         if ($repoBox.Text -and (Test-Path -LiteralPath $repoBox.Text)) { $d.SelectedPath = $repoBox.Text }
-        if ($d.ShowDialog() -eq 'OK') { $repoBox.Text = $d.SelectedPath }
+        if ($d.ShowDialog() -eq 'OK') {
+            Invoke-CPSafe -What 'Preparing the folder' { $use = Use-CPRepoFolder $d.SelectedPath; if ($use) { $repoBox.Text = $use } }
+        }
     })
     $grid.Controls.Add($repoBrowse, 2, $row); $row++
 
@@ -437,8 +649,12 @@ function Show-CPSettingsDialog {
     $repoBtns.AutoSize = $true; $repoBtns.Dock = 'Fill'; $repoBtns.WrapContents = $true
     $cloneBtn = New-CPButton 'Clone a GitHub repo...'
     $createBtn = New-CPButton 'Create a new GitHub repo...'
-    $repoBtns.Controls.Add($cloneBtn); $repoBtns.Controls.Add($createBtn)
+    $connectBtn = New-CPButton 'Connect this folder to GitHub...'
+    $repoBtns.Controls.Add($cloneBtn); $repoBtns.Controls.Add($createBtn); $repoBtns.Controls.Add($connectBtn)
+    $repoHint = New-CPLabel 'GitHub is optional: an empty folder works on this PC alone. Connect it to GitHub any time to upload everything saved so far.'
+    $repoHint.ForeColor = [System.Drawing.Color]::Gray; $repoHint.MaximumSize = New-Object System.Drawing.Size(560, 0); $repoHint.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 6)
     $grid.Controls.Add($repoBtns, 1, $row); $grid.SetColumnSpan($repoBtns, 2); $row++
+    $grid.Controls.Add($repoHint, 1, $row); $grid.SetColumnSpan($repoHint, 2); $row++
 
     $cloneInto = {
         param([string]$Url)
@@ -468,9 +684,40 @@ function Show-CPSettingsDialog {
             if (-not $name) { return }
             $priv = [System.Windows.Forms.MessageBox]::Show('Make the repo private?  (No = public, visible on your profile)', 'Create repo', 'YesNo', 'Question')
             $f.Cursor = 'WaitCursor'
-            $url = New-CPGitHubRepo -Name $name.Trim() -Description 'My accepted competitive programming solutions (C++)' -Private:($priv -eq 'Yes')
+            $url = New-CPGitHubRepo -Name $name.Trim() -Description 'My accepted competitive programming solutions' -Private:($priv -eq 'Yes')
             $f.Cursor = 'Default'
             & $cloneInto $url
+        }
+    })
+
+    $connectBtn.Add_Click({
+        Invoke-CPSafe -What 'Connect to GitHub' {
+            $path = $repoBox.Text.Trim('"', ' ')
+            if (-not $path) { [System.Windows.Forms.MessageBox]::Show('Choose your solutions folder first.', 'Connect to GitHub') | Out-Null; return }
+            $path = Use-CPRepoFolder $path; if (-not $path) { return }
+            $repoBox.Text = $path
+            $cur = (Invoke-CPGit $path remote get-url origin)
+            if ($cur.Code -eq 0) {
+                $a = [System.Windows.Forms.MessageBox]::Show("This folder is already connected to:`n$($cur.Output)`n`nConnect it to a different GitHub repo?", 'Connect to GitHub', 'YesNo', 'Question')
+                if ($a -ne 'Yes') { return }
+            }
+            $how = [System.Windows.Forms.MessageBox]::Show("Create a new repo on your GitHub account for these solutions?`n`nYes  -  create a new repo (you'll sign in to GitHub if needed)`nNo   -  I already made an EMPTY repo on github.com and will paste its link", 'Connect to GitHub', 'YesNoCancel', 'Question')
+            if ($how -eq 'Cancel') { return }
+            if ($how -eq 'Yes') {
+                $name = [Microsoft.VisualBasic.Interaction]::InputBox('Name for the new GitHub repo:', 'Connect to GitHub', (Split-Path $path -Leaf))
+                if (-not $name) { return }
+                $priv = [System.Windows.Forms.MessageBox]::Show('Make the repo private?  (No = public, visible on your profile)', 'Connect to GitHub', 'YesNo', 'Question')
+                $f.Cursor = 'WaitCursor'
+                try { $url = New-CPGitHubRepo -Name $name.Trim() -Description 'My accepted competitive programming solutions' -Private:($priv -eq 'Yes') -Empty } finally { $f.Cursor = 'Default' }
+            } else {
+                $url = [Microsoft.VisualBasic.Interaction]::InputBox('Link of your empty GitHub repo:', 'Connect to GitHub', 'https://github.com/')
+                if (-not $url -or $url -eq 'https://github.com/') { return }
+            }
+            $f.Cursor = 'WaitCursor'
+            try { $up = Connect-CPGitHub -RepoPath $path -Url $url } finally { $f.Cursor = 'Default' }
+            $cPush.Checked = $true
+            $msg = if ($up) { "Connected and uploaded your saved solutions to:`n$url" } else { "Connected to:`n$url`n`nYour next save will upload there." }
+            [System.Windows.Forms.MessageBox]::Show($msg, 'Connect to GitHub', 'OK', 'Information') | Out-Null
         }
     })
 
@@ -529,6 +776,10 @@ function Show-CPSettingsDialog {
         $Config.QuickSaveNotify = $(if ($cDlg.Checked) { 'notification' } else { 'dialog' })
         $Config.CloseAfterSave = $cClose.Checked
         if ($cStart.Enabled) { try { Set-CPStartWithWindows $cStart.Checked } catch { } }
+        if ($Config.RepoPath -and (Test-CPRepoFolder $Config.RepoPath) -ne 'repo') {
+            try { $use = Use-CPRepoFolder $Config.RepoPath; if ($use) { $Config.RepoPath = $use; $repoBox.Text = $use } } catch { }
+        }
+        if ((Test-CPRepoFolder $Config.RepoPath) -eq 'repo') { [void](Confirm-CPGitIdentity $Config.RepoPath) }
         $problems = @(Test-CPConfig $Config)
         if ($problems.Count) {
             $a = [System.Windows.Forms.MessageBox]::Show(($problems -join "`n") + "`n`nSave anyway?", 'Settings', 'YesNo', 'Warning')
@@ -645,7 +896,8 @@ function Show-CPMainWindow {
     $ui.Settings = New-CPButton 'Settings'
     $ui.Browse = New-CPButton 'Solved problems...'
     $ui.Templates = New-CPButton 'Templates...'
-    foreach ($b in @($ui.Save, $ui.Browse, $ui.Templates, $ui.Rebuild, $ui.OpenFolder, $ui.OpenWeb, $ui.Settings)) { $btns.Controls.Add($b) }
+    $ui.Help = New-CPButton 'How to use'
+    foreach ($b in @($ui.Save, $ui.Browse, $ui.Templates, $ui.Rebuild, $ui.OpenFolder, $ui.OpenWeb, $ui.Settings, $ui.Help)) { $btns.Controls.Add($b) }
     $grid.Controls.Add($btns, 0, $row); $grid.SetColumnSpan($btns, 3); $row++
 
     $ui.Status = New-CPLabel 'Ready.' $script:CPFontBold
@@ -765,6 +1017,7 @@ function Show-CPMainWindow {
         $Config.PushAfterSave = $ui.OptPush.Checked; $Config.UpdateIndexes = $ui.OptIdx.Checked
         $Config.ResetAfterSave = $ui.OptReset.Checked; $Config.CloseAfterSave = $ui.OptClose.Checked
         try { Save-CPConfig -Config $Config -Path $ConfigPath } catch { }
+        if (-not (Confirm-CPGitIdentity $Config.RepoPath)) { & $setStatus 'Git needs your name and email before the first save (one time).' $script:CPRed; return }
 
         $st.Busy = $true; $ui.Save.Enabled = $false; $ui.Save.Text = 'Saving...'
         $ui.Log.Clear()
@@ -834,6 +1087,7 @@ function Show-CPMainWindow {
         }
     })
     $ui.Save.Add_Click({ Invoke-CPSafe -What 'Saving' $doSave })
+    $ui.Help.Add_Click({ Invoke-CPSafe -What 'How to use' { [void](Show-CPWelcome) } })
     $f.Add_FormClosing({ param($s, $e) if ($st.Busy) { $e.Cancel = $true; $ui.Status.Text = 'Please wait - still saving...' } })
     $ui.Fetch.Add_Click({ Invoke-CPSafe -What 'Online lookup' $doFetch })
     $ui.Reload.Add_Click({ Invoke-CPSafe -What 'Reload' { $ui.Log.Clear(); & $loadFile $true } })
@@ -871,7 +1125,7 @@ function Show-CPMainWindow {
     $ui.OpenWeb.Add_Click({
         Invoke-CPSafe -What 'Open on GitHub' {
             $u = Get-CPRepoWebUrl $Config.RepoPath
-            if ($u) { Start-Process $u } else { throw 'This repo has no GitHub remote.' }
+            if ($u) { Start-Process $u } else { throw 'This solutions folder is not connected to GitHub yet. Open Settings > Connect this folder to GitHub....' }
         }
     })
     $ui.Settings.Add_Click({

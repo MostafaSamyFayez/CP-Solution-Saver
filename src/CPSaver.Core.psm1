@@ -12,7 +12,7 @@
 # ----------------------------------------------------------------------------
 
 $script:AppName    = 'CPSolutionSaver'
-$script:AppVersion = '2.3.2'
+$script:AppVersion = '2.4.0'
 
 function Get-CPAppVersion { $script:AppVersion }
 
@@ -45,6 +45,7 @@ function Get-CPDefaultConfig {
         UpdateIndexes    = $true
         QuickSaveNotify  = 'dialog'  # 'dialog' (message box in the middle of the screen) or 'notification'
         BackupsToKeep    = 30
+        TutorialShown    = $false    # the welcome tour is shown once, on first run
         ConfigVersion    = 4
     }
 }
@@ -119,6 +120,28 @@ function Get-CPPracticeFileFor {
     return $null
 }
 
+function Remove-CPPracticeLaunchers {
+    <# Deletes save_solution.bat / quick_save.bat / solved_problems.bat that older versions put next to
+       the practice project (only files this app wrote: they start CPSaverLauncher.exe or CPSaver.vbs). Returns the deleted paths. #>
+    param([Parameter(Mandatory)]$Config)
+    $removed = New-Object System.Collections.Generic.List[string]
+    $dirs = New-Object System.Collections.Generic.List[string]
+    foreach ($pf in @(@($Config.PracticeFiles) + @($Config.MainCppPath) | Where-Object { $_ })) {
+        $d = Split-Path $pf -Parent
+        for ($i = 0; $i -lt 3 -and $d; $i++) { if (-not ($dirs -contains $d)) { $dirs.Add($d) }; $d = Split-Path $d -Parent }
+    }
+    foreach ($d in $dirs) {
+        foreach ($n in @('save_solution.bat', 'quick_save.bat', 'solved_problems.bat')) {
+            $f = Join-Path $d $n
+            if (-not (Test-Path -LiteralPath $f)) { continue }
+            try {
+                if ((Get-Content -LiteralPath $f -Raw) -match 'CPSaverLauncher\.exe|CPSaver\.vbs') { Remove-Item -LiteralPath $f -Force; $removed.Add($f) }
+            } catch { }
+        }
+    }
+    return $removed.ToArray()
+}
+
 function Test-CPConfig {
     <# Returns a list of problems with the config (empty list = OK). #>
     param([Parameter(Mandatory)]$Config)
@@ -127,8 +150,9 @@ function Test-CPConfig {
     if ($existing.Count -eq 0) {
         $problems.Add("No practice file found (main.cpp / main.c / main.py): '$((@($Config.PracticeFiles) + @($Config.MainCppPath) | Where-Object { $_ }) -join "', '")'")
     }
-    if (-not $Config.RepoPath -or -not (Test-Path -LiteralPath (Join-Path $Config.RepoPath '.git'))) {
-        $problems.Add("Solutions repo folder is not a git repository: '$($Config.RepoPath)'")
+    switch (Test-CPRepoFolder $Config.RepoPath) {
+        'none'  { $problems.Add('Choose a folder for your solutions (an empty folder is fine - it becomes a new repo).') }
+        'files' { $problems.Add("Solutions folder is not a git repository and is not empty: '$($Config.RepoPath)'") }
     }
     return $problems.ToArray()
 }
@@ -912,6 +936,50 @@ function Test-CPGitAvailable {
     return [bool](Get-Command git -ErrorAction SilentlyContinue)
 }
 
+function Get-CPGitIdentity {
+    <# The name + email git will record with a commit in this folder (repo, global or system level). #>
+    param([string]$RepoPath)
+    $dir = if ($RepoPath -and (Test-Path -LiteralPath $RepoPath)) { $RepoPath } else { $HOME }
+    $n = "$((Invoke-CPGit $dir config user.name).Output)".Trim()
+    $e = "$((Invoke-CPGit $dir config user.email).Output)".Trim()
+    return @{ Name = $n; Email = $e; Ok = [bool]($n -and $e) }
+}
+
+function Set-CPGitIdentity {
+    <# Saves the name + email for git on this PC (git config --global), once. #>
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Email)
+    $Name = $Name.Trim(); $Email = $Email.Trim()
+    if (-not $Name) { throw 'Enter your name.' }
+    if ($Email -notmatch '^[^@\s]+@[^@\s]+$') { throw 'Enter a valid email address (like you@example.com).' }
+    foreach ($kv in @(@('user.name', $Name), @('user.email', $Email))) {
+        $r = Invoke-CPGit $HOME config --global $kv[0] $kv[1]
+        if ($r.Code -ne 0) { throw "git config failed: $($r.Output)" }
+    }
+}
+
+function Test-CPRepoFolder {
+    <# 'repo' (a git repo), 'empty' (empty or missing folder - can become one), 'files' (a folder with files, not a repo), 'none' (no path). #>
+    param([string]$Path)
+    if (-not $Path) { return 'none' }
+    if (Test-Path -LiteralPath (Join-Path $Path '.git')) { return 'repo' }
+    if (-not (Test-Path -LiteralPath $Path)) { return 'empty' }
+    if (@(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue).Count -eq 0) { return 'empty' }
+    return 'files'
+}
+
+function Initialize-CPRepo {
+    <# Makes a folder a new local git repo (branch "main"). Files already in it are kept. Returns the full path. #>
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-CPGitAvailable)) { throw 'Git is not installed. Install it from https://git-scm.com/download/win and try again.' }
+    if (Test-Path -LiteralPath (Join-Path $Path '.git')) { return (Resolve-Path -LiteralPath $Path).ProviderPath }
+    if (-not (Test-Path -LiteralPath $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
+    $full = (Resolve-Path -LiteralPath $Path).ProviderPath
+    $r = Invoke-CPGit $full init -q
+    if ($r.Code -ne 0) { throw "git init failed: $($r.Output)" }
+    Invoke-CPGit $full symbolic-ref HEAD refs/heads/main | Out-Null   # works on every git version, before the first commit
+    return $full
+}
+
 # ----------------------------------------------------------------------------
 #  Saving
 # ----------------------------------------------------------------------------
@@ -937,10 +1005,13 @@ function Save-CPSolution {
     if (-not $Info.Link) { & $emit 'ERROR: The problem link is required. It identifies the problem, so the same problem is never saved twice.'; return $result }
     if (-not $Info.Name) { & $emit 'ERROR: The problem name is empty.'; return $result }
     if (-not (Test-CPGitAvailable)) { & $emit 'ERROR: git is not installed or not on PATH.'; return $result }
-    if (-not (Test-Path -LiteralPath (Join-Path $RepoPath '.git'))) { & $emit "ERROR: '$RepoPath' is not a git repository."; return $result }
+    $kind = Test-CPRepoFolder $RepoPath
+    if ($kind -eq 'empty') {
+        try { $RepoPath = Initialize-CPRepo $RepoPath; & $emit "Created a new local git repo in $RepoPath" }
+        catch { & $emit "ERROR: $($_.Exception.Message)"; return $result }
+    } elseif ($kind -ne 'repo') { & $emit "ERROR: '$RepoPath' is not a git repository (and not empty). Choose an empty folder or your repo in Settings."; return $result }
     # git needs a name + email for every commit (even offline); say so clearly instead of a git error
-    $gitName = (Invoke-CPGit $RepoPath config user.name).Output; $gitMail = (Invoke-CPGit $RepoPath config user.email).Output
-    if (-not "$gitName".Trim() -or -not "$gitMail".Trim()) {
+    if (-not (Get-CPGitIdentity $RepoPath).Ok) {
         & $emit ('ERROR: Git does not know your name and email yet (it records them with every save, even without GitHub). ' +
             'Open Command Prompt and run:' + "`n" + '  git config --global user.name "Your Name"' + "`n" + '  git config --global user.email "you@example.com"' + "`n" + 'then save again.')
         return $result
@@ -1580,7 +1651,7 @@ function Get-CPGitHubToken {
 
 function New-CPGitHubRepo {
     <# Creates a GitHub repo for the signed-in user and returns its clone URL. #>
-    param([Parameter(Mandatory)][string]$Name, [string]$Description = '', [switch]$Private)
+    param([Parameter(Mandatory)][string]$Name, [string]$Description = '', [switch]$Private, [switch]$Empty)
     Initialize-CPWeb
     $token = Get-CPGitHubToken
     if (-not $token) { throw 'Could not get your GitHub sign-in from Git. Run any git push once to sign in, then try again.' }
@@ -1590,9 +1661,28 @@ function New-CPGitHubRepo {
         $existing = Invoke-RestMethod -Uri "https://api.github.com/repos/$($user.login)/$Name" -Headers $headers
         return $existing.clone_url
     } catch { }
-    $body = @{ name = $Name; description = $Description; private = [bool]$Private; auto_init = $true } | ConvertTo-Json
+    $body = @{ name = $Name; description = $Description; private = [bool]$Private; auto_init = (-not $Empty) } | ConvertTo-Json
     $r = Invoke-RestMethod -Method Post -Uri 'https://api.github.com/user/repos' -Headers $headers -Body $body -ContentType 'application/json'
     return $r.clone_url
+}
+
+function Connect-CPGitHub {
+    <# Links a local solutions repo to a GitHub repo (remote "origin") and uploads what is saved so far.
+       Returns $true if something was uploaded. The GitHub repo should be empty. #>
+    param([Parameter(Mandatory)][string]$RepoPath, [Parameter(Mandatory)][string]$Url)
+    if ((Test-CPRepoFolder $RepoPath) -ne 'repo') { throw "'$RepoPath' is not a git repo." }
+    $Url = $Url.Trim()
+    if ($Url -notmatch '^(https://|http://|git@|ssh://|file://|[A-Za-z]:[\\/]|\\\\|/)') { throw 'Paste the repo link, like https://github.com/you/Problem-Solving-Solutions' }
+    $has = (Invoke-CPGit $RepoPath remote get-url origin).Code -eq 0
+    $r = if ($has) { Invoke-CPGit $RepoPath remote set-url origin $Url } else { Invoke-CPGit $RepoPath remote add origin $Url }
+    if ($r.Code -ne 0) { throw "Could not set the GitHub link: $($r.Output)" }
+    if ((Invoke-CPGit $RepoPath rev-parse --verify -q HEAD).Code -ne 0) { return $false }   # nothing saved yet
+    $p = Invoke-CPGit $RepoPath push -u origin HEAD
+    if ($p.Code -ne 0) {
+        throw ("Linked, but the upload failed. If the GitHub repo is not empty (for example it has a README), " +
+               "create a new empty one instead.`n`n$($p.Output)")
+    }
+    return $true
 }
 
 function Get-CPFileWebUrl {

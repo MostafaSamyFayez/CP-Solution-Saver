@@ -15,6 +15,12 @@ try {
 } catch { }
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -like '*CPSaver.ps1*-Tray*' } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force } catch { } }
+# .bat launchers that older versions put next to the practice project
+try {
+    Import-Module (Join-Path $InstallDir 'CPSaver.Core.psm1') -Force -DisableNameChecking -ErrorAction Stop
+    foreach ($b in @(Remove-CPPracticeLaunchers -Config (Get-CPConfig))) { Write-Host "Removed $b" }
+    Remove-Module CPSaver.Core -ErrorAction SilentlyContinue
+} catch { }
 $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'CP Solution Saver.lnk'
 if (Test-Path -LiteralPath $startup) { Remove-Item -LiteralPath $startup -Force; Write-Host "Removed $startup" }
 $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'CP Solution Saver'
@@ -26,4 +32,4 @@ $data = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'CPSolutionS
 if ($RemoveSettings) { Remove-Item -LiteralPath $data -Recurse -Force -ErrorAction SilentlyContinue; Write-Host "Removed $data" }
 else { Write-Host "Kept your settings and template in $data (run with -RemoveSettings to delete them)." }
 Write-Host 'CP Solution Saver was uninstalled. Your solutions repo was not changed.' -ForegroundColor Green
-Write-Host 'Note: a save_solution.bat launcher next to your practice project (if any) can be deleted by hand.'
+

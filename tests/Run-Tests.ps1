@@ -247,6 +247,59 @@ try {
     Check 'missing git name/email -> clear message' ((-not $nr.Success) -and (($nr.Log -join ' ') -match 'git config --global user.name'))
     Check 'missing git name/email -> nothing written' (-not (Test-Path (Join-Path $noId 'Codeforces')))
 
+    Write-Host "`n[14] First-time setup helpers" -ForegroundColor Cyan
+    # an empty folder becomes a repo by itself on the first save
+    $fresh = Join-Path $tmp 'brand-new'
+    New-Item -ItemType Directory -Path $fresh | Out-Null
+    Check 'empty folder detected' ((Test-CPRepoFolder $fresh) -eq 'empty')
+    $tmpMain = Join-Path $tmp 'cfgtest-main.cpp'; Set-Content $tmpMain '// x'
+    Check 'empty folder is a valid setting' (@(Test-CPConfig @{ PracticeFiles = @($tmpMain); MainCppPath = ''; RepoPath = $fresh }).Count -eq 0)
+    $fr = Save-CPSolution -Info (New-CPSolutionInfo -Code $code) -RepoPath $fresh -Push -UpdateIndexes
+    Check 'save into an empty folder creates the repo and commits' ($fr.Success -and (Test-Path (Join-Path $fresh '.git')) -and (($fr.Log -join ' ') -match 'Created a new local git repo')) ($fr.Log -join ' / ')
+    Check 'new repo uses branch main' ((RunGit $fresh rev-parse --abbrev-ref HEAD) -eq 'main')
+    Check 'repo detected' ((Test-CPRepoFolder $fresh) -eq 'repo')
+    $withFiles = Join-Path $tmp 'has-files'; New-Item -ItemType Directory -Path $withFiles | Out-Null; Set-Content (Join-Path $withFiles 'x.txt') 'x'
+    Check 'folder with files is not used silently' (((Test-CPRepoFolder $withFiles) -eq 'files') -and (-not (Save-CPSolution -Info (New-CPSolutionInfo -Code $code) -RepoPath $withFiles).Success))
+    Check 'Initialize-CPRepo keeps existing files' (((Initialize-CPRepo $withFiles) -ne $null) -and (Test-Path (Join-Path $withFiles '.git')) -and (Test-Path (Join-Path $withFiles 'x.txt')))
+    # connect a local repo to "GitHub" (a bare repo standing in for it) and upload what was saved
+    $gh = Join-Path $tmp 'github-stand-in.git'; RunGit $tmp init -q --bare $gh | Out-Null
+    $badUrl = $false; try { Connect-CPGitHub -RepoPath $fresh -Url 'not a link' | Out-Null } catch { $badUrl = $true }
+    Check 'connect rejects a non-link' $badUrl
+    $up = $false; try { $up = Connect-CPGitHub -RepoPath $fresh -Url $gh } catch { Write-Host "    $($_.Exception.Message)" }
+    Check 'connect uploads what was saved locally' ($up -and ((RunGit $gh log -1 --format=%s main) -eq 'Add Codeforces 1234A - Two Arrays'))
+    $later = Save-CPSolution -Info (New-CPSolutionInfo -Code ($code -replace 'int main\(\)\{\}', 'int main(){ return 1; }')) -RepoPath $fresh -Push
+    Check 'after connecting, saves push' ($later.Success -and $later.Pushed) ($later.Log -join ' / ')
+    # git name/email: set once from the app
+    $gcfg = Join-Path $tmp 'id.gitconfig'; Set-Content -Path $gcfg -Value ''
+    $oldG = $env:GIT_CONFIG_GLOBAL; $oldS = $env:GIT_CONFIG_NOSYSTEM
+    $env:GIT_CONFIG_GLOBAL = $gcfg; $env:GIT_CONFIG_NOSYSTEM = '1'
+    try {
+        Check 'no identity detected' (-not (Get-CPGitIdentity $noId).Ok)
+        $bad = $false; try { Set-CPGitIdentity -Name 'A' -Email 'not-an-email' } catch { $bad = $true }
+        Check 'bad email rejected' $bad
+        Set-CPGitIdentity -Name 'Test User' -Email 'test@example.com'
+        $id = Get-CPGitIdentity $noId
+        Check 'identity saved and read back' ($id.Ok -and $id.Name -eq 'Test User' -and $id.Email -eq 'test@example.com')
+        $nr2 = Save-CPSolution -Info (New-CPSolutionInfo -Code $code) -RepoPath $noId
+        Check 'save works once the identity is set' $nr2.Success ($nr2.Log -join ' / ')
+    } finally { $env:GIT_CONFIG_GLOBAL = $oldG; $env:GIT_CONFIG_NOSYSTEM = $oldS }
+    # old .bat launchers next to the project are cleaned up (only ours)
+    $proj = Join-Path $tmp 'proj'; $projSrc = Join-Path $proj 'src'; New-Item -ItemType Directory -Path $projSrc -Force | Out-Null
+    Set-Content (Join-Path $projSrc 'main.cpp') '// x'
+    Set-Content (Join-Path $proj 'my.sln') ''
+    Set-Content (Join-Path $proj 'save_solution.bat') "@echo off`r`nstart """" ""C:\x\CPSaverLauncher.exe"" open"
+    Set-Content (Join-Path $proj 'quick_save.bat') "@echo off`r`nstart """" wscript.exe ""C:\x\CPSaver.vbs"" -Quick"
+    Set-Content (Join-Path $proj 'solved_problems.bat') "@echo off`r`necho this one is the user's own"
+    $gone = @(Remove-CPPracticeLaunchers -Config @{ PracticeFiles = @((Join-Path $projSrc 'main.cpp')); MainCppPath = '' })
+    Check 'our old launchers removed' (($gone.Count -eq 2) -and -not (Test-Path (Join-Path $proj 'save_solution.bat')) -and -not (Test-Path (Join-Path $proj 'quick_save.bat')))
+    Check 'a .bat the user wrote is kept' (Test-Path (Join-Path $proj 'solved_problems.bat'))
+    # welcome tour flag
+    $tcfgPath = Join-Path $tmp 'tour.json'
+    $tc = Get-CPConfig $tcfgPath
+    Check 'new install shows the tour once' ($tc.TutorialShown -eq $false)
+    $tc.TutorialShown = $true; Save-CPConfig -Config $tc -Path $tcfgPath
+    Check 'tour remembered as shown' ((Get-CPConfig $tcfgPath).TutorialShown -eq $true)
+
     if ($Online) {
         Write-Host "`n[11] Online lookups" -ForegroundColor Cyan
         $cf = Get-CPProblemMetadata 'https://codeforces.com/problemset/problem/4/A'
@@ -266,6 +319,10 @@ finally {
 
 # Every button in the windows must do something (a missing click handler is easy to miss)
 Write-Host "`n[12] GUI buttons are wired" -ForegroundColor Cyan
+foreach ($sf in @('CPSaver.ps1', 'CPSaver.Gui.ps1', 'CPSaver.Tray.ps1', 'CPSaver.Core.psm1', '..\install.ps1', '..\uninstall.ps1')) {
+    $perr = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $SrcDir $sf), [ref]$null, [ref]$perr)
+    Check "$sf has no syntax errors" (@($perr).Count -eq 0) ((@($perr) | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Message)" }) -join '; ')
+}
 $guiText = Get-Content -Raw -LiteralPath (Join-Path $SrcDir 'CPSaver.Gui.ps1')
 foreach ($m in [regex]::Matches($guiText, '\$ui\.(\w+) = New-CPButton')) {
     $bn = $m.Groups[1].Value

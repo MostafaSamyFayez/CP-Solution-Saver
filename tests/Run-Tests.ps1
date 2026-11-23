@@ -129,7 +129,7 @@ try {
     Check 'quick save again -> already saved' ($q2.Success -and $q2.Title -like 'Already saved*')
     Set-Content -Path $main -Value "int main(){}"
     $q3 = Invoke-CPQuickSave -Config $cfg
-    Check 'quick save without header -> clear error' ((-not $q3.Success) -and ($q3.Summary -join ' ') -match 'No problem name')
+    Check 'quick save without header -> clear error (link required)' ((-not $q3.Success) -and ($q3.Summary -join ' ') -match 'No problem link')
     Set-Content -Path $main -Value "/*`n * Problem Name: Missing Number`n * Problem Link: https://cses.fi/problemset/task/1083`n */`nint main(){ return 1; }"
     $out = & $exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $SrcDir 'CPSaver.ps1') -Quick -NoNotify -NoFetch -ConfigPath $cfgPath 2>&1 | Out-String
     Check 'cli -Quick exit 0 and saved' ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $repo 'CSES/1083_Missing_Number.cpp'))) $out
@@ -146,8 +146,79 @@ try {
     Check 'backups pruned to the newest 3' (@(Get-ChildItem (Get-CPBackupDir) -File).Count -eq 3)
     Check 'difficulty groups' ((Get-CPDifficultyGroup '1200').Label -eq 'Rating 1200' -and (Get-CPDifficultyGroup 'easy').Label -eq 'Easy' -and (Get-CPDifficultyGroup '').Label -eq 'Unrated')
 
+    Write-Host "`n[10] Languages, link identity, dates, templates, settings" -ForegroundColor Cyan
+    # python header (docstring) + save as .py
+    $py = "`"`"`"`nProblem Name: Two Sum`nProblem Link: https://leetcode.com/problems/two-sum/description/`nTopics: array`n`"`"`"`n`nimport sys`nprint(1)`n"
+    $hp = Read-CPHeader $py
+    Check 'python docstring header parsed' ($hp.HasHeader -and $hp.Fields['Problem Name'] -eq 'Two Sum' -and $hp.Body.TrimStart().StartsWith('import sys'))
+    $hh = Read-CPHeader "# Problem Name: Weird`n# Problem Link: https://cses.fi/problemset/task/1068`nn = int(input())`n"
+    Check 'python # comment header parsed' ($hh.HasHeader -and $hh.Fields['Problem Link'] -match '1068' -and $hh.Body.StartsWith('n = int'))
+    $hc = Read-CPHeader "// Problem Name: X`n// Problem Link: https://cses.fi/problemset/task/1069`n#include <stdio.h>`nint main(){}`n"
+    Check '// header keeps #include in the body' ($hc.HasHeader -and $hc.Body.StartsWith('#include <stdio.h>'))
+    Check 'no header in plain C++ (#include is not a comment)' (-not (Read-CPHeader "#include <iostream>`nint main(){}").HasHeader)
+    $ipy = New-CPSolutionInfo -Code $py -Extension '.py'
+    Check 'python file path' ($ipy.RelPath -eq 'LeetCode/Two_Sum.py' -and $ipy.Language -eq 'Python') "got $($ipy.RelPath)"
+    $rpy = Save-CPSolution -Info $ipy -RepoPath $repo -UpdateIndexes
+    $savedPy = Get-Content (Join-Path $repo 'LeetCode/Two_Sum.py') -Raw
+    Check 'python saved with """ header, code kept' ($rpy.Success -and $savedPy.StartsWith('"""') -and $savedPy -match 'Problem Name: Two Sum' -and $savedPy -match 'import sys')
+    Check 'python saved next to the C++ solution of the same problem (not over it)' ((Test-Path (Join-Path $repo 'LeetCode/Two_Sum.cpp')) -and ($rpy.Log -join ' ') -match 'another language')
+    $ic = New-CPSolutionInfo -Code "/*`n * Problem Name: Missing Number`n * Problem Link: https://cses.fi/problemset/task/1083`n */`n#include <stdio.h>`nint main(void){return 0;}`n" -Extension '.c'
+    Check 'C file path' ($ic.RelPath -eq 'CSES/1083_Missing_Number.c') "got $($ic.RelPath)"
+    # link identity
+    Check 'problem key: contest and problemset links are the same problem' ((Get-CPProblemKey 'https://codeforces.com/contest/4/problem/A') -eq (Get-CPProblemKey 'http://www.codeforces.com/problemset/problem/4/a?locale=en'))
+    Check 'problem key: leetcode /description' ((Get-CPProblemKey 'https://leetcode.com/problems/two-sum/description/') -eq (Get-CPProblemKey 'https://leetcode.com/problems/two-sum'))
+    Check 'problem key: other sites ignore query / trailing slash' ((Get-CPProblemKey 'https://example.com/p/7/?x=1') -eq (Get-CPProblemKey 'http://example.com/p/7'))
+    $cf2 = "/*`n * Problem Name: Two Arrays (other spelling)`n * Problem Link: https://codeforces.com/problemset/problem/1234/A`n */`nint main(){}`n"
+    $rk = Save-CPSolution -Info (New-CPSolutionInfo -Code $cf2) -RepoPath $repo -UpdateIndexes
+    Check 'same problem via a different link spelling updates the same file' ($rk.IsUpdate -and $rk.RelPath -eq 'Codeforces/1234A_Two_Arrays.cpp') "got $($rk.RelPath)"
+    $nolink = Save-CPSolution -Info (New-CPSolutionInfo -Code "/*`n * Problem Name: No Link`n */`nint main(){}") -RepoPath $repo
+    Check 'saving without a link is refused' ((-not $nolink.Success) -and ($nolink.Log -join ' ') -match 'link is required')
+    # date bug: same code saved again on a later day must not be a new change
+    $dcode = "/*`n * Problem Name: Distinct Numbers`n * Problem Link: https://cses.fi/problemset/task/1621`n */`nint main(){ return 0; }`n"
+    $d1 = New-CPSolutionInfo -Code $dcode; $d1.DateSolved = '2026-01-01'; $d1.DateAuto = $true
+    $r1 = Save-CPSolution -Info $d1 -RepoPath $repo -UpdateIndexes
+    $d2 = New-CPSolutionInfo -Code $dcode   # auto date = today
+    $r2 = Save-CPSolution -Info $d2 -RepoPath $repo -UpdateIndexes
+    Check 'same code on another day -> nothing new (first date kept)' ($r1.Commit -and $r2.Success -and -not $r2.Commit -and ((Get-Content (Join-Path $repo $r1.RelPath) -Raw) -match 'Date Solved: 2026-01-01'))
+    $d3 = New-CPSolutionInfo -Code ($dcode -replace 'return 0;', 'return 0; /* faster */')
+    $r3 = Save-CPSolution -Info $d3 -RepoPath $repo -UpdateIndexes
+    Check 'changed code -> update, first date still kept' ($r3.Commit -like 'Update*' -and ((Get-Content (Join-Path $repo $r3.RelPath) -Raw) -match 'Date Solved: 2026-01-01'))
+    # templates
+    $tpls = @(Get-CPTemplates -Extension '.cpp')
+    Check 'C++ templates installed (Basic first)' ($tpls.Count -ge 6 -and $tpls[0].Name -eq 'C++ - Basic')
+    Check 'Python and C templates installed' (@(Get-CPTemplates -Extension '.py').Count -ge 3 -and @(Get-CPTemplates -Extension '.c').Count -ge 2)
+    $pyT = Read-CPTextFile (@(Get-CPTemplates -Extension '.py')[0].Path)
+    Check 'python template header is a docstring' ($pyT.StartsWith('"""') -and (Read-CPHeader $pyT).HasHeader)
+    $tcfg = Get-CPDefaultConfig
+    Check 'default reset template = Basic' ((Split-Path (Get-CPDefaultTemplatePath -Config $tcfg -Extension '.cpp') -Leaf) -eq 'C++ - Basic.cpp')
+    $tcfg.DefaultTemplates['C++'] = 'C++ - Multiple test cases'
+    Check 'chosen reset template used' ((Split-Path (Get-CPDefaultTemplatePath -Config $tcfg -Extension '.cpp') -Leaf) -eq 'C++ - Multiple test cases.cpp')
+    $mainPy = Join-Path $tmp 'main.py'; Set-Content -Path $mainPy -Value 'print(42)'
+    Reset-CPPracticeFile -MainCppPath $mainPy -Config $tcfg
+    Check 'reset main.py uses the Python template' ((Get-Content $mainPy -Raw) -match 'def main')
+    # settings: v3 config migrates to reset-on + dialog; practice files; active = newest
+    $old = Join-Path $tmp 'old-config.json'
+    Set-Content -Path $old -Value ('{ "MainCppPath": "' + ($main -replace '\\', '\\') + '", "RepoPath": "' + ($repo -replace '\\', '\\') + '", "ResetAfterSave": false, "QuickSaveNotify": "notification", "ConfigVersion": 3 }')
+    $mc = Get-CPConfig $old
+    Check 'old settings migrate: reset on, message box' ($mc.ResetAfterSave -eq $true -and $mc.QuickSaveNotify -eq 'dialog' -and @($mc.PracticeFiles).Count -eq 1)
+    $mc.PracticeFiles = @($main, $mainPy)
+    (Get-Item $main).LastWriteTime = (Get-Date).AddMinutes(-5); (Get-Item $mainPy).LastWriteTime = Get-Date
+    Check 'active practice file = most recently saved' ((Get-CPActivePracticeFile $mc) -eq (Get-Item $mainPy).FullName)
+    Save-CPConfig -Config $mc -Path $old
+    $mc2 = Get-CPConfig $old
+    Check 'practice files + default templates survive save/load' (@($mc2.PracticeFiles).Count -eq 2 -and $mc2.ResetAfterSave -eq $true)
+    # quick save on main.py, then reset with the Python template
+    $mc2.AutoFetch = $false
+    Set-Content -Path $mainPy -Value "`"`"`"`nProblem Name: Weird Algorithm`nProblem Link: https://cses.fi/problemset/task/1068`n`"`"`"`nn = int(input())`n"
+    (Get-Item $mainPy).LastWriteTime = Get-Date
+    $qp = Invoke-CPQuickSave -Config $mc2
+    Check 'quick save picks main.py and saves CSES/1068_Weird_Algorithm.py' ($qp.Success -and $qp.RelPath -eq 'CSES/1068_Weird_Algorithm.py') ($qp.Summary -join ' / ')
+    Check 'quick save reset main.py to the Python template' ((Get-Content $mainPy -Raw) -match 'def main' -and ($qp.Summary -join ' ') -match 'main.py reset')
+    $bk2 = Import-CPSolution -Config $mc2 -RelPath 'CSES/1068_Weird_Algorithm.py'
+    Check 'loading a .py solution goes into main.py' ((Get-Content $mainPy -Raw) -match 'Weird Algorithm' -and $bk2)
+
     if ($Online) {
-        Write-Host "`n[10] Online lookups" -ForegroundColor Cyan
+        Write-Host "`n[11] Online lookups" -ForegroundColor Cyan
         $cf = Get-CPProblemMetadata 'https://codeforces.com/problemset/problem/4/A'
         Check 'Codeforces 4A -> Watermelon, 800, tags' ($cf.Ok -and $cf.Name -eq 'Watermelon' -and $cf.Difficulty -eq '800' -and @($cf.Topics).Count -gt 0) $cf.Message
         $lcm = Get-CPProblemMetadata 'https://leetcode.com/problems/two-sum/'

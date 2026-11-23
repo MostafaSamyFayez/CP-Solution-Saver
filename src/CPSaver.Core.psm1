@@ -12,7 +12,7 @@
 # ----------------------------------------------------------------------------
 
 $script:AppName    = 'CPSolutionSaver'
-$script:AppVersion = '2.1.0'
+$script:AppVersion = '2.2.0'
 
 function Get-CPAppVersion { $script:AppVersion }
 
@@ -33,30 +33,57 @@ function Get-CPDefaultConfigPath { Join-Path (Get-CPDataDir) 'config.json' }
 
 function Get-CPDefaultConfig {
     [ordered]@{
-        MainCppPath      = ''
+        MainCppPath      = ''        # the active practice file (kept for older versions; see PracticeFiles)
+        PracticeFiles    = @()       # one practice file per language, e.g. main.cpp, main.c, main.py
         RepoPath         = ''
-        TemplatePath     = (Join-Path (Get-CPDataDir) 'template.cpp')
+        TemplatePath     = (Join-Path (Get-CPDataDir) 'template.cpp')   # legacy (v2.0); templates now live in templates\
+        DefaultTemplates = [ordered]@{}   # extension -> template name used by "Reset after saving"
         AutoFetch        = $true
         PushAfterSave    = $true
-        ResetAfterSave   = $false
+        ResetAfterSave   = $true
         UpdateIndexes    = $true
-        QuickSaveNotify  = 'notification'   # 'notification' (Windows toast) or 'dialog' (message box)
+        QuickSaveNotify  = 'dialog'  # 'dialog' (message box in the middle of the screen) or 'notification'
         BackupsToKeep    = 30
-        ConfigVersion    = 3
+        ConfigVersion    = 4
     }
 }
 
 function Get-CPConfig {
     param([string]$Path = (Get-CPDefaultConfigPath))
     $cfg = Get-CPDefaultConfig
+    $oldVersion = 4
     if (Test-Path $Path) {
         try {
             $raw = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-            foreach ($p in $raw.PSObject.Properties) { $cfg[$p.Name] = $p.Value }
+            $oldVersion = 1
+            foreach ($p in $raw.PSObject.Properties) {
+                if ($p.Name -eq 'DefaultTemplates') {
+                    $d = [ordered]@{}
+                    if ($p.Value) { foreach ($q in $p.Value.PSObject.Properties) { $d[$q.Name] = [string]$q.Value } }
+                    $cfg.DefaultTemplates = $d
+                } elseif ($p.Name -eq 'PracticeFiles') {
+                    $cfg.PracticeFiles = @($p.Value | Where-Object { $_ } | ForEach-Object { [string]$_ })
+                } else { $cfg[$p.Name] = $p.Value }
+            }
+            if ($raw.PSObject.Properties['ConfigVersion']) { $oldVersion = [int]$raw.ConfigVersion }
         } catch {
             Write-Warning "Could not read config $Path : $($_.Exception.Message). Using defaults."
         }
     }
+    if ($oldVersion -lt 4) {
+        # v2.2: reset after saving and the centered message box became the defaults
+        $cfg.ResetAfterSave = $true
+        $cfg.QuickSaveNotify = 'dialog'
+        $cfg.ConfigVersion = 4
+    }
+    # older configs only had MainCppPath
+    $list = New-Object System.Collections.Generic.List[string]
+    foreach ($f in @($cfg.PracticeFiles) + @($cfg.MainCppPath)) {
+        if ($f -and -not ($list | Where-Object { $_ -ieq $f })) { $list.Add([string]$f) }
+    }
+    $cfg.PracticeFiles = $list.ToArray()
+    $active = Get-CPActivePracticeFile $cfg
+    if ($active) { $cfg.MainCppPath = $active }
     return $cfg
 }
 
@@ -64,16 +91,40 @@ function Save-CPConfig {
     param([Parameter(Mandatory)]$Config, [string]$Path = (Get-CPDefaultConfigPath))
     $dir = Split-Path $Path -Parent
     if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    $json = ([pscustomobject]$Config) | ConvertTo-Json -Depth 5
+    $copy = [ordered]@{}
+    foreach ($k in $Config.Keys) { $copy[$k] = $Config[$k] }
+    $copy.PracticeFiles = @($Config.PracticeFiles)
+    $copy.DefaultTemplates = [pscustomobject]$Config.DefaultTemplates
+    $json = ([pscustomobject]$copy) | ConvertTo-Json -Depth 5
     Write-CPTextFile -Path $Path -Text $json
+}
+
+function Get-CPActivePracticeFile {
+    <# The practice file saved most recently (that's the one you just worked on). #>
+    param([Parameter(Mandatory)]$Config)
+    $files = @(@($Config.PracticeFiles) + @($Config.MainCppPath) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+        ForEach-Object { Get-Item -LiteralPath $_ } | Sort-Object LastWriteTime -Descending)
+    if ($files.Count) { return $files[0].FullName }
+    return $null
+}
+
+function Get-CPPracticeFileFor {
+    <# The configured practice file for an extension (.cpp, .c, .py ...), or $null. #>
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$Extension)
+    $lang = Get-CPLanguage $Extension
+    foreach ($f in @($Config.PracticeFiles) + @($Config.MainCppPath)) {
+        if ($f -and ((Get-CPLanguage $f).Name -eq $lang.Name)) { return $f }
+    }
+    return $null
 }
 
 function Test-CPConfig {
     <# Returns a list of problems with the config (empty list = OK). #>
     param([Parameter(Mandatory)]$Config)
     $problems = New-Object System.Collections.Generic.List[string]
-    if (-not $Config.MainCppPath -or -not (Test-Path -LiteralPath $Config.MainCppPath)) {
-        $problems.Add("Practice file (main.cpp) not found: '$($Config.MainCppPath)'")
+    $existing = @(@($Config.PracticeFiles) + @($Config.MainCppPath) | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
+    if ($existing.Count -eq 0) {
+        $problems.Add("No practice file found (main.cpp / main.c / main.py): '$((@($Config.PracticeFiles) + @($Config.MainCppPath) | Where-Object { $_ }) -join "', '")'")
     }
     if (-not $Config.RepoPath -or -not (Test-Path -LiteralPath (Join-Path $Config.RepoPath '.git'))) {
         $problems.Add("Solutions repo folder is not a git repository: '$($Config.RepoPath)'")
@@ -137,67 +188,149 @@ function Get-CPCanonicalKey([string]$Key) {
     return $null
 }
 
+function Read-CPHeaderLines {
+    <# Parses "Key: value" lines (comment markers already removed). Returns @{ Fields; SawKnown }. #>
+    param([string[]]$Lines, [string]$Newline)
+    $fields = [ordered]@{}
+    $lastKey = $null
+    $sawKnown = $false
+    foreach ($line in $Lines) {
+        if ($line.Trim() -eq '') { continue }
+        $km = [regex]::Match($line, '^\s*([A-Za-z][A-Za-z ]{0,29}?)\s*:\s?(.*)$')
+        if ($km.Success -and $km.Groups[1].Value -notmatch '^(https?|ftp)$') {
+            $canon = Get-CPCanonicalKey $km.Groups[1].Value
+            $key = if ($canon) { $canon } else { $km.Groups[1].Value.Trim() }
+            if ($canon) { $sawKnown = $true }
+            # a "Key:" that is really a continuation (e.g. "Idea: ...") after Notes stays in Notes
+            if (-not $canon -and $lastKey -eq 'Notes') {
+                $fields['Notes'] = ($fields['Notes'] + $Newline + $line.Trim()).Trim()
+                continue
+            }
+            $fields[$key] = $km.Groups[2].Value.Trim()
+            $lastKey = $key
+        } elseif ($lastKey) {
+            $fields[$lastKey] = ($fields[$lastKey] + $Newline + $line.Trim()).Trim()
+        }
+    }
+    return @{ Fields = $fields; SawKnown = $sawKnown }
+}
+
 function Read-CPHeader {
     <#
-      Parses the first /* ... */ comment at the top of a C++ file.
-      Returns @{ Fields = [ordered] key->value ; HasHeader ; Body = code after header ; Newline }
+      Parses the problem header at the top of a source file. Accepted forms:
+        /* ... */                 (C, C++, Java, ...)
+        """ ... """ or ''' '''    (Python docstring)
+        consecutive // or # comment lines
+      An optional #! line before it is kept (Prefix).
+      Returns @{ Fields = [ordered] key->value ; HasHeader ; Body ; Newline ; Prefix ; Style }
       Unknown "Key: value" lines are kept as extra fields; lines without a key
       continue the previous field (multi-line notes).
     #>
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Code)
 
     $nl = Get-CPNewline $Code
-    $fields = [ordered]@{}
-    $m = [regex]::Match($Code, '^\uFEFF?\s*/\*(.*?)\*/[ \t]*\r?\n?', [Text.RegularExpressions.RegexOptions]::Singleline)
-    if (-not $m.Success) {
-        return @{ Fields = $fields; HasHeader = $false; Body = $Code; Newline = $nl }
-    }
+    $none = @{ Fields = [ordered]@{}; HasHeader = $false; Body = $Code; Newline = $nl; Prefix = ''; Style = '' }
+    $text = $Code.TrimStart([char]0xFEFF)
+    $prefix = ''
+    $pm = [regex]::Match($text, '^(#![^\r\n]*\r?\n)')
+    if ($pm.Success) { $prefix = $pm.Groups[1].Value; $text = $text.Substring($pm.Length) }
 
-    $lastKey = $null
-    $sawKnown = $false
-    foreach ($rawLine in ($m.Groups[1].Value -split "\r?\n")) {
-        $line = $rawLine -replace '^\s*\*?[ \t]?', ''
-        if ($line.Trim() -eq '') { continue }
-        $km = [regex]::Match($line, '^\s*([A-Za-z][A-Za-z ]{0,29}?)\s*:\s?(.*)$')
-        if ($km.Success) {
-            $canon = Get-CPCanonicalKey $km.Groups[1].Value
-            $key = if ($canon) { $canon } else { $km.Groups[1].Value.Trim() }
-            if ($canon) { $sawKnown = $true }
-            # a "Key:" that is really a continuation (e.g. "Idea: ...") after Notes stays in Notes
-            if (-not $canon -and $lastKey -eq 'Notes') {
-                $fields['Notes'] = ($fields['Notes'] + $nl + $line.TrimEnd()).Trim()
-                continue
-            }
-            $fields[$key] = $km.Groups[2].Value.Trim()
-            $lastKey = $key
-        } elseif ($lastKey) {
-            $fields[$lastKey] = ($fields[$lastKey] + $nl + $line.TrimEnd()).Trim()
+    $style = ''; $inner = $null; $consumed = 0
+    $m = [regex]::Match($text, '^\s*/\*(.*?)\*/[ \t]*\r?\n?', 'Singleline')
+    if ($m.Success) {
+        $style = 'block'; $consumed = $m.Length
+        $inner = @($m.Groups[1].Value -split "\r?\n" | ForEach-Object { $_ -replace '^\s*\*?[ \t]?', '' })
+    }
+    if (-not $style) {
+        $m = [regex]::Match($text, '^\s*("""|' + "'''" + ')(.*?)\1[ \t]*\r?\n?', 'Singleline')
+        if ($m.Success) {
+            $style = 'docstring'; $consumed = $m.Length
+            $inner = @($m.Groups[2].Value -split "\r?\n" | ForEach-Object { $_ -replace '^\s*[#*]?[ \t]?', '' })
         }
     }
-
-    if (-not $sawKnown) {
-        # A normal comment, not our header.
-        return @{ Fields = [ordered]@{}; HasHeader = $false; Body = $Code; Newline = $nl }
+    if (-not $style) {
+        # // lines, or # lines that are not C preprocessor directives (#include, #define, ...)
+        $m = [regex]::Match($text, '^(?:[ \t]*(?://|#(?!\s*(?:include|define|pragma|ifn?def|if|endif|else|elif|undef|import|error|line)\b))[^\r\n]*(?:\r?\n|$))+')
+        if ($m.Success) {
+            $style = 'line'; $consumed = $m.Length
+            $inner = @($m.Value -split "\r?\n" | ForEach-Object { $_ -replace '^\s*(//+|#+)[ \t]?', '' })
+        }
     }
-    $body = $Code.Substring($m.Index + $m.Length)
-    return @{ Fields = $fields; HasHeader = $true; Body = $body; Newline = $nl }
+    if (-not $style) { return $none }
+
+    $parsed = Read-CPHeaderLines -Lines $inner -Newline $nl
+    if (-not $parsed.SawKnown) { return $none }   # a normal comment, not our header
+    return @{ Fields = $parsed.Fields; HasHeader = $true; Body = $text.Substring($consumed); Newline = $nl; Prefix = $prefix; Style = $style }
 }
 
+function Get-CPLanguage {
+    <# Language info from a file name or extension: @{ Name; Ext; Style ('block' | 'python') } #>
+    param([string]$PathOrExt)
+    $ext = if ($PathOrExt -match '^\.\w+$') { $PathOrExt } else { [IO.Path]::GetExtension([string]$PathOrExt) }
+    $ext = ([string]$ext).ToLowerInvariant()
+    switch ($ext) {
+        '.cpp'  { return @{ Name = 'C++'; Ext = '.cpp'; Style = 'block' } }
+        '.cc'   { return @{ Name = 'C++'; Ext = '.cc'; Style = 'block' } }
+        '.cxx'  { return @{ Name = 'C++'; Ext = '.cxx'; Style = 'block' } }
+        '.c'    { return @{ Name = 'C'; Ext = '.c'; Style = 'block' } }
+        '.py'   { return @{ Name = 'Python'; Ext = '.py'; Style = 'python' } }
+        '.java' { return @{ Name = 'Java'; Ext = '.java'; Style = 'block' } }
+        '.js'   { return @{ Name = 'JavaScript'; Ext = '.js'; Style = 'block' } }
+        '.cs'   { return @{ Name = 'C#'; Ext = '.cs'; Style = 'block' } }
+        '.kt'   { return @{ Name = 'Kotlin'; Ext = '.kt'; Style = 'block' } }
+        '.go'   { return @{ Name = 'Go'; Ext = '.go'; Style = 'block' } }
+        '.rs'   { return @{ Name = 'Rust'; Ext = '.rs'; Style = 'block' } }
+    }
+    if ($ext) { return @{ Name = $ext.TrimStart('.').ToUpper(); Ext = $ext; Style = 'block' } }
+    return @{ Name = 'C++'; Ext = '.cpp'; Style = 'block' }
+}
+
+function Get-CPSourceExtensions { @('.cpp', '.cc', '.cxx', '.c', '.py', '.java', '.js', '.cs', '.kt', '.go', '.rs') }
+
 function ConvertTo-CPHeader {
-    param([Parameter(Mandatory)]$Fields, [string]$Newline = "`r`n")
+    <# -Style 'block' => /* ... */ ; 'python' => """ ... """ #>
+    param([Parameter(Mandatory)]$Fields, [string]$Newline = "`r`n", [string]$Style = 'block')
+    $py = ($Style -eq 'python')
     $lines = New-Object System.Collections.Generic.List[string]
-    $lines.Add('/*')
+    $lines.Add($(if ($py) { '"""' } else { '/*' }))
+    $lead = if ($py) { '' } else { ' * ' }
+    $cont = if ($py) { '    ' } else { ' *   ' }
     $keys = @($script:HeaderOrder | Where-Object { $Fields.Contains($_) })
     $keys += @($Fields.Keys | Where-Object { $script:HeaderOrder -notcontains $_ })
     foreach ($k in $keys) {
         $v = [string]$Fields[$k]
         if ($v -eq '' -and $k -notin @('Problem Name', 'Problem Link', 'Topics', 'Difficulty', 'Notes')) { continue }
         $parts = $v -split "\r?\n"
-        $lines.Add((" * {0}: {1}" -f $k, $parts[0]).TrimEnd())
-        for ($i = 1; $i -lt $parts.Count; $i++) { $lines.Add((" *   " + $parts[$i]).TrimEnd()) }
+        $lines.Add(("{0}{1}: {2}" -f $lead, $k, $parts[0]).TrimEnd())
+        for ($i = 1; $i -lt $parts.Count; $i++) { $lines.Add(($cont + $parts[$i]).TrimEnd()) }
     }
-    $lines.Add(' */')
+    $lines.Add($(if ($py) { '"""' } else { ' */' }))
     return ($lines -join $Newline)
+}
+
+function Get-CPProblemKey {
+    <#
+      A stable identity for a problem, from its link: different spellings of
+      the same problem give the same key (e.g. codeforces.com/contest/4/problem/A
+      and codeforces.com/problemset/problem/4/A -> 'codeforces:4A').
+    #>
+    param([string]$Link)
+    if (-not $Link -or -not $Link.Trim()) { return '' }
+    $pi = Get-CPPlatformInfo $Link
+    switch ($pi.Platform) {
+        'Codeforces' { if ($pi.Id) { return 'codeforces:' + $pi.Id.ToUpperInvariant() } }
+        'LeetCode'   { if ($pi.Slug) { return 'leetcode:' + $pi.Slug } }
+        'AtCoder'    { if ($pi.Id) { return 'atcoder:' + $pi.Id.ToLowerInvariant() } }
+        'CSES'       { if ($pi.Id) { return 'cses:' + $pi.Id } }
+        'SPOJ'       { if ($pi.Id) { return 'spoj:' + $pi.Id } }
+        'CodeChef'   { if ($pi.Id) { return 'codechef:' + $pi.Id } }
+        'Kattis'     { if ($pi.Id) { return 'kattis:' + $pi.Id.ToLowerInvariant() } }
+        'HackerRank' { if ($pi.Slug) { return 'hackerrank:' + $pi.Slug.ToLowerInvariant() } }
+        'VJudge'     { if ($pi.Id) { return 'vjudge:' + $pi.Id.ToLowerInvariant() } }
+    }
+    $u = ($Link.Trim() -replace '[#?].*$', '') -replace '^https?://(www\.)?', ''
+    $u = $u -replace '/+(description|problem|submissions|editorial)?/*$', ''
+    return 'url:' + $u.TrimEnd('/').ToLowerInvariant()
 }
 
 # ----------------------------------------------------------------------------
@@ -448,17 +581,22 @@ function New-CPSolutionInfo {
       Combines the header of the code with online metadata into everything
       needed to save the solution. Returns a hashtable:
         Name, Link, Platform, Id, Difficulty, Topics (string[]), Notes,
-        DateSolved, Extra (other header fields), Body, Newline, FileBase,
-        RelPath, Metadata (fetch result or $null)
+        DateSolved, DateAuto, Extra (other header fields), Body, Newline,
+        Prefix, Ext, Language, Style, Key, FileBase, RelPath,
+        Metadata (fetch result or $null)
+      -Extension: the practice file's extension (.cpp, .c, .py ...); decides
+      the saved file's extension and header style.
     #>
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Code,
         [switch]$Fetch,
+        [string]$Extension = '.cpp',
         [hashtable]$Overrides = @{}
     )
     $h = Read-CPHeader $Code
     $f = $h.Fields
     function _get($k) { if ($f.Contains($k)) { return [string]$f[$k] } else { return '' } }
+    $lang = Get-CPLanguage $Extension
 
     $info = @{
         Name       = _get 'Problem Name'
@@ -469,10 +607,15 @@ function New-CPSolutionInfo {
         Topics     = @(Merge-CPTopics @(,(_get 'Topics')))
         Notes      = _get 'Notes'
         DateSolved = _get 'Date Solved'
+        DateAuto   = $false
         Extra      = [ordered]@{}
         Body       = $h.Body
         Newline    = $h.Newline
+        Prefix     = $h.Prefix
         HasHeader  = $h.HasHeader
+        Ext        = $lang.Ext
+        Language   = $lang.Name
+        Style      = $lang.Style
         Metadata   = $null
     }
     foreach ($k in $f.Keys) { if ($script:HeaderOrder -notcontains $k) { $info.Extra[$k] = $f[$k] } }
@@ -492,13 +635,13 @@ function New-CPSolutionInfo {
             $info.Topics = @(Merge-CPTopics @($info.Topics, $md.Topics))
         }
     }
-    if (-not $info.DateSolved) { $info.DateSolved = (Get-Date).ToString('yyyy-MM-dd') }
+    if (-not $info.DateSolved) { $info.DateSolved = (Get-Date).ToString('yyyy-MM-dd'); $info.DateAuto = $true }
     Update-CPSolutionPath $info
     return $info
 }
 
 function Update-CPSolutionPath {
-    <# (Re)computes FileBase and RelPath from Name/Id/Platform. #>
+    <# (Re)computes Key, FileBase and RelPath from Link/Name/Id/Platform/Ext. #>
     param([Parameter(Mandatory)][hashtable]$Info)
     $plat = Get-CPSafeFileName $(if ($Info.Platform) { $Info.Platform } else { 'Other' })
     if (-not $plat) { $plat = 'Other' }
@@ -508,8 +651,10 @@ function Update-CPSolutionPath {
     elseif ($safeName) { $base = $safeName }
     elseif ($safeId) { $base = $safeId }
     else { $base = '' }
+    $ext = if ($Info.Ext) { $Info.Ext } else { '.cpp' }
+    $Info.Key = Get-CPProblemKey $Info.Link
     $Info.FileBase = $base
-    $Info.RelPath = if ($base) { "$plat/$base.cpp" } else { '' }
+    $Info.RelPath = if ($base) { "$plat/$base$ext" } else { '' }
 }
 
 function ConvertTo-CPSolutionText {
@@ -527,8 +672,9 @@ function ConvertTo-CPSolutionText {
     foreach ($k in $Info.Extra.Keys) { $fields[$k] = $Info.Extra[$k] }
     $fields['Notes'] = $Info.Notes
     $nl = $Info.Newline
+    $style = if ($Info.Style) { $Info.Style } else { 'block' }
     $body = $Info.Body -replace '^(\s*\r?\n)+', ''
-    return (ConvertTo-CPHeader -Fields $fields -Newline $nl) + $nl + $nl + $body
+    return ([string]$Info.Prefix) + (ConvertTo-CPHeader -Fields $fields -Newline $nl -Style $style) + $nl + $nl + $body
 }
 
 # ----------------------------------------------------------------------------
@@ -536,12 +682,12 @@ function ConvertTo-CPSolutionText {
 # ----------------------------------------------------------------------------
 
 function Get-CPAllSolutions {
-    <# Reads the header of every .cpp file in the repo (skips .git, Index). #>
+    <# Reads the header of every solution file in the repo (skips .git, Index). #>
     param([Parameter(Mandatory)][string]$RepoPath)
     $root = (Resolve-Path -LiteralPath $RepoPath).ProviderPath
     $list = New-Object System.Collections.Generic.List[object]
     # (-Include is unreliable with -LiteralPath on Windows PowerShell 5.1, so filter by extension here)
-    $exts = @('.cpp', '.cc', '.cxx', '.c', '.py', '.java')
+    $exts = Get-CPSourceExtensions
     $files = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
         Where-Object { $exts -contains $_.Extension.ToLowerInvariant() -and $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch '[\\/]Index[\\/]' }
     foreach ($file in $files) {
@@ -554,32 +700,52 @@ function Get-CPAllSolutions {
         $link = if ($f.Contains('Problem Link')) { $f['Problem Link'] } else { '' }
         $plat = if ($f.Contains('Platform') -and $f['Platform']) { $f['Platform'] } else { ($rel -split '/')[0] }
         if ($rel -notmatch '/') { $plat = (Get-CPPlatformInfo $link).Platform }
+        $lang = Get-CPLanguage $file.Extension
         $list.Add([pscustomobject]@{
             RelPath    = $rel
             Name       = $name
             Link       = $link
+            Key        = (Get-CPProblemKey $link)
             Platform   = $plat
             Id         = $(if ($f.Contains('Problem ID')) { $f['Problem ID'] } else { '' })
             Difficulty = $(if ($f.Contains('Difficulty')) { $f['Difficulty'] } else { '' })
             Topics     = @(Merge-CPTopics @(,$(if ($f.Contains('Topics')) { $f['Topics'] } else { '' })))
             DateSolved = $(if ($f.Contains('Date Solved')) { $f['Date Solved'] } else { $file.LastWriteTime.ToString('yyyy-MM-dd') })
             Notes      = $(if ($f.Contains('Notes')) { $f['Notes'] } else { '' })
+            Language   = $lang.Name
+            Ext        = $file.Extension.ToLowerInvariant()
             FullPath   = $file.FullName
         })
     }
     return $list.ToArray()
 }
 
-function Find-CPExistingSolution {
-    <# Finds an already-saved solution for the same problem (same link, or same path). #>
+function Find-CPSolvedBefore {
+    <# Every saved solution of the same problem (same problem link), in any language. #>
     param([Parameter(Mandatory)][string]$RepoPath, [Parameter(Mandatory)][hashtable]$Info)
-    if ($Info.RelPath -and (Test-Path -LiteralPath (Join-Path $RepoPath $Info.RelPath))) { return $Info.RelPath }
-    if (-not $Info.Link) { return $null }
-    $norm = { param($u) ($u.Trim().TrimEnd('/') -replace '^https?://(www\.)?', '').ToLowerInvariant() }
-    $target = & $norm $Info.Link
-    foreach ($s in (Get-CPAllSolutions $RepoPath)) {
-        if ($s.Link -and (& $norm $s.Link) -eq $target) { return $s.RelPath }
+    $key = Get-CPProblemKey $Info.Link
+    if (-not $key) { return @() }
+    return @(Get-CPAllSolutions $RepoPath | Where-Object { $_.Key -eq $key })
+}
+
+function Find-CPExistingSolution {
+    <#
+      The saved file to update for this problem: same problem link and same
+      language. (The link identifies the problem, so a renamed problem or a
+      different spelling of the link still finds it.) Falls back to the same
+      path. Returns the repo-relative path or $null.
+    #>
+    param([Parameter(Mandatory)][string]$RepoPath, [Parameter(Mandatory)][hashtable]$Info)
+    $lang = Get-CPLanguage $(if ($Info.Ext) { $Info.Ext } else { '.cpp' })
+    $same = @(Find-CPSolvedBefore -RepoPath $RepoPath -Info $Info | Where-Object { $_.Language -eq $lang.Name } | Sort-Object RelPath)
+    if ($same.Count) {
+        $exact = $same | Where-Object { $_.RelPath -eq $Info.RelPath } | Select-Object -First 1
+        if ($exact) { return $exact.RelPath }
+        $notV = $same | Where-Object { $_.RelPath -notmatch '_v\d+\.\w+$' } | Select-Object -First 1
+        if ($notV) { return $notV.RelPath }
+        return $same[0].RelPath
     }
+    if ($Info.RelPath -and (Test-Path -LiteralPath (Join-Path $RepoPath $Info.RelPath))) { return $Info.RelPath }
     return $null
 }
 
@@ -749,6 +915,7 @@ function Save-CPSolution {
     $emit = { param($m) $lines.Add($m); if ($Log) { & $Log $m } }
     $result = @{ Success = $false; RelPath = ''; IsUpdate = $false; Commit = ''; Pushed = $false; Log = $lines }
 
+    if (-not $Info.Link) { & $emit 'ERROR: The problem link is required. It identifies the problem, so the same problem is never saved twice.'; return $result }
     if (-not $Info.Name) { & $emit 'ERROR: The problem name is empty.'; return $result }
     if (-not (Test-CPGitAvailable)) { & $emit 'ERROR: git is not installed or not on PATH.'; return $result }
     if (-not (Test-Path -LiteralPath (Join-Path $RepoPath '.git'))) { & $emit "ERROR: '$RepoPath' is not a git repository."; return $result }
@@ -769,16 +936,27 @@ function Save-CPSolution {
     $rel = $Info.RelPath
     if ($existing) {
         if ($KeepBoth) {
-            $dir = Split-Path $existing -Parent; $base = [IO.Path]::GetFileNameWithoutExtension($existing)
+            $dir = Split-Path $existing -Parent; $base = [IO.Path]::GetFileNameWithoutExtension($existing); $ext = [IO.Path]::GetExtension($existing)
             $i = 2
-            while (Test-Path -LiteralPath (Join-Path $RepoPath ("$dir/${base}_v$i.cpp"))) { $i++ }
-            $rel = ("$dir/${base}_v$i.cpp") -replace '\\', '/'
+            while (Test-Path -LiteralPath (Join-Path $RepoPath ("$dir/${base}_v$i$ext"))) { $i++ }
+            $rel = ("$dir/${base}_v$i$ext") -replace '\\', '/'
             & $emit "Already saved before; keeping both -> $rel"
         } else {
             $rel = $existing
             $result.IsUpdate = $true
             & $emit "Already saved before; updating $rel"
+            # keep the date it was first solved (unless you wrote a date in the header yourself),
+            # so re-saving the same code on another day is not a change
+            if ($Info.DateAuto) {
+                try {
+                    $old = Read-CPHeader (Read-CPTextFile (Join-Path $RepoPath $existing))
+                    if ($old.Fields.Contains('Date Solved') -and $old.Fields['Date Solved']) { $Info.DateSolved = [string]$old.Fields['Date Solved'] }
+                } catch { }
+            }
         }
+    } else {
+        $other = @(Find-CPSolvedBefore -RepoPath $RepoPath -Info $Info)
+        if ($other.Count) { & $emit ("Solved before in another language: " + (($other | ForEach-Object { $_.RelPath }) -join ', ') + "; saving this $($Info.Language) solution next to it.") }
     }
     $result.RelPath = $rel
 
@@ -835,7 +1013,323 @@ function Save-CPSolution {
     return $result
 }
 
-function Get-CPDefaultTemplate {
+# ----------------------------------------------------------------------------
+#  Templates (one folder, files named "<Language> - <name>.<ext>")
+# ----------------------------------------------------------------------------
+
+function Get-CPTemplateDir { Join-Path (Get-CPDataDir) 'templates' }
+
+function Get-CPBuiltInTemplates {
+    <# name (with extension) -> code without the header #>
+    $cppIncludes = "#include <iostream>`n#include <vector>`n#include <string>`n#include <algorithm>`n`nusing namespace std;`n"
+    [ordered]@{
+        'C++ - Basic.cpp' = $cppIncludes + @'
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    return 0;
+}
+'@
+        'C++ - Multiple test cases.cpp' = $cppIncludes + @'
+
+void solve() {
+
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+    int t = 1;
+    cin >> t;
+    while (t--) solve();
+    return 0;
+}
+'@
+        'C++ - Competitive (aliases, macros).cpp' = @'
+#define _CRT_SECURE_NO_WARNINGS
+#include <iostream>
+#include <iomanip>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <numeric>
+#include <map>
+#include <set>
+#include <unordered_map>
+#include <unordered_set>
+#include <queue>
+#include <stack>
+#include <deque>
+#include <bitset>
+#include <cmath>
+#include <climits>
+#include <cstring>
+#include <functional>
+
+using namespace std;
+
+using ll = long long;
+using ull = unsigned long long;
+using ld = long double;
+using pii = pair<int, int>;
+using pll = pair<ll, ll>;
+using vi = vector<int>;
+using vll = vector<ll>;
+
+#define all(x) (x).begin(), (x).end()
+#define rall(x) (x).rbegin(), (x).rend()
+#define sz(x) (int)(x).size()
+
+const ll MOD = 1000000007LL;
+const ll INF = (ll)4e18;
+
+void solve() {
+
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+#ifdef LOCAL_INPUT   // add LOCAL_INPUT to your project's preprocessor definitions to read input.txt
+    freopen("input.txt", "r", stdin);
+#endif
+    int t = 1;
+    // cin >> t;   // uncomment for multiple test cases
+    while (t--) solve();
+    return 0;
+}
+'@
+        'C++ - Graph (BFS, DFS).cpp' = "#include <iostream>`n#include <vector>`n#include <queue>`n`nusing namespace std;`n" + @'
+
+int n, m;
+vector<vector<int>> adj;
+vector<bool> visited;
+
+void dfs(int u) {
+    visited[u] = true;
+    for (int v : adj[u])
+        if (!visited[v]) dfs(v);
+}
+
+// distance (number of edges) from src to every node, -1 = unreachable
+vector<int> bfs(int src) {
+    vector<int> dist(n + 1, -1);
+    queue<int> q;
+    dist[src] = 0;
+    q.push(src);
+    while (!q.empty()) {
+        int u = q.front(); q.pop();
+        for (int v : adj[u])
+            if (dist[v] == -1) { dist[v] = dist[u] + 1; q.push(v); }
+    }
+    return dist;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+    cin >> n >> m;
+    adj.assign(n + 1, vector<int>());
+    visited.assign(n + 1, false);
+    for (int i = 0; i < m; i++) {
+        int u, v;
+        cin >> u >> v;
+        adj[u].push_back(v);
+        adj[v].push_back(u);   // remove for a directed graph
+    }
+
+    return 0;
+}
+'@
+        'C++ - Number theory (mod pow, sieve, nCr).cpp' = "#include <iostream>`n#include <vector>`n`nusing namespace std;`n" + @'
+
+using ll = long long;
+const ll MOD = 1000000007LL;
+
+ll gcd_(ll a, ll b) { return b == 0 ? a : gcd_(b, a % b); }
+ll lcm_(ll a, ll b) { return a / gcd_(a, b) * b; }
+
+// (base ^ exp) % mod in O(log exp)
+ll power(ll base, ll exp, ll mod = MOD) {
+    ll result = 1;
+    base %= mod;
+    while (exp > 0) {
+        if (exp & 1) result = result * base % mod;
+        base = base * base % mod;
+        exp >>= 1;
+    }
+    return result;
+}
+
+// modular inverse; mod must be prime
+ll inverse(ll a, ll mod = MOD) { return power(a, mod - 2, mod); }
+
+// all primes <= n
+vector<int> sieve(int n) {
+    vector<bool> composite(n + 1, false);
+    vector<int> primes;
+    for (int i = 2; i <= n; i++) {
+        if (composite[i]) continue;
+        primes.push_back(i);
+        for (ll j = (ll)i * i; j <= n; j += i) composite[(size_t)j] = true;
+    }
+    return primes;
+}
+
+// nCr % MOD for n <= MAXN (call initFactorials() once)
+const int MAXN = 200000;
+vector<ll> fact, invFact;
+void initFactorials() {
+    fact.assign(MAXN + 1, 1);
+    invFact.assign(MAXN + 1, 1);
+    for (int i = 1; i <= MAXN; i++) fact[i] = fact[i - 1] * i % MOD;
+    invFact[MAXN] = inverse(fact[MAXN]);
+    for (int i = MAXN; i > 0; i--) invFact[i - 1] = invFact[i] * i % MOD;
+}
+ll nCr(int n, int r) {
+    if (r < 0 || r > n) return 0;
+    return fact[n] * invFact[r] % MOD * invFact[n - r] % MOD;
+}
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    return 0;
+}
+'@
+        'C++ - DSU and Fenwick tree.cpp' = "#include <iostream>`n#include <vector>`n#include <algorithm>`n`nusing namespace std;`n" + @'
+
+// Disjoint set union (union-find) with path compression + union by size
+struct DSU {
+    vector<int> parent, sz;
+    DSU(int n) : parent(n + 1), sz(n + 1, 1) { for (int i = 0; i <= n; i++) parent[i] = i; }
+    int find(int x) {
+        while (parent[x] != x) x = parent[x] = parent[parent[x]];
+        return x;
+    }
+    bool unite(int a, int b) {
+        a = find(a); b = find(b);
+        if (a == b) return false;
+        if (sz[a] < sz[b]) swap(a, b);
+        parent[b] = a;
+        sz[a] += sz[b];
+        return true;
+    }
+};
+
+// Fenwick tree (BIT), 1-indexed: add(i, v); sum(i) = a[1] + ... + a[i]
+struct Fenwick {
+    int n;
+    vector<long long> t;
+    Fenwick(int n) : n(n), t(n + 1, 0) {}
+    void add(int i, long long v) { for (; i <= n; i += i & -i) t[i] += v; }
+    long long sum(int i) { long long s = 0; for (; i > 0; i -= i & -i) s += t[i]; return s; }
+    long long sum(int l, int r) { return sum(r) - sum(l - 1); }
+};
+
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    return 0;
+}
+'@
+        'C - Basic.c' = @'
+#define _CRT_SECURE_NO_WARNINGS
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void) {
+
+    return 0;
+}
+'@
+        'C - Multiple test cases.c' = @'
+#define _CRT_SECURE_NO_WARNINGS
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void solve(void) {
+
+}
+
+int main(void) {
+    int t = 1;
+    if (scanf("%d", &t) != 1) return 0;
+    while (t--) solve();
+    return 0;
+}
+'@
+        'Python - Basic.py' = @'
+def main():
+    n = int(input())
+
+
+if __name__ == "__main__":
+    main()
+'@
+        'Python - Fast input.py' = @'
+import sys
+input = sys.stdin.readline
+
+
+def main():
+    n = int(input())
+    a = list(map(int, input().split()))
+
+
+main()
+'@
+        'Python - Multiple test cases.py' = @'
+import sys
+input = sys.stdin.readline
+
+
+def solve():
+    n = int(input())
+
+
+def main():
+    t = int(input())
+    for _ in range(t):
+        solve()
+
+
+main()
+'@
+    }
+}
+
+function Initialize-CPTemplates {
+    <# Writes the built-in templates that are missing (your edits are never overwritten). Returns the folder. #>
+    $dir = Get-CPTemplateDir
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $builtIn = Get-CPBuiltInTemplates
+    foreach ($name in $builtIn.Keys) {
+        $path = Join-Path $dir $name
+        if (Test-Path -LiteralPath $path) { continue }
+        $lang = Get-CPLanguage $name
+        $hdr = ConvertTo-CPHeader -Fields ([ordered]@{ 'Problem Name' = ''; 'Problem Link' = ''; 'Difficulty' = ''; 'Topics' = ''; 'Notes' = '' }) -Newline "`n" -Style $lang.Style
+        $text = ($hdr + "`n`n" + ($builtIn[$name] -replace "\r?\n", "`n").TrimEnd() + "`n") -replace "`n", "`r`n"
+        Write-CPTextFile -Path $path -Text $text
+    }
+    # a template you customized in v2.0/2.1 (template.cpp) is kept as "C++ - My template.cpp"
+    $legacy = Join-Path (Get-CPDataDir) 'template.cpp'
+    $mine = Join-Path $dir 'C++ - My template.cpp'
+    if ((Test-Path -LiteralPath $legacy) -and -not (Test-Path -LiteralPath $mine)) {
+        $old = (Read-CPTextFile $legacy) -replace '\s+', ''
+        $orig = (Get-CPLegacyTemplate) -replace '\s+', ''
+        if ($old -and $old -ne $orig) { Copy-Item -LiteralPath $legacy -Destination $mine }
+    }
+    return $dir
+}
+
+function Get-CPLegacyTemplate {
     @'
 /*
  * Problem Name:
@@ -861,18 +1355,45 @@ int main() {
 '@
 }
 
-function Initialize-CPTemplate {
-    param([Parameter(Mandatory)][string]$TemplatePath)
-    if (-not (Test-Path -LiteralPath $TemplatePath)) {
-        Write-CPTextFile -Path $TemplatePath -Text ((Get-CPDefaultTemplate) -replace "\r?\n", "`r`n")
-    }
+function Get-CPTemplates {
+    <# Templates for a language (by extension); all templates when no extension. Objects: Name, Path, Language, Ext. #>
+    param([string]$Extension)
+    $dir = Initialize-CPTemplates
+    $want = if ($Extension) { (Get-CPLanguage $Extension).Name } else { $null }
+    $out = @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $lang = Get-CPLanguage $_.Extension
+        [pscustomobject]@{ Name = $_.BaseName; Path = $_.FullName; Language = $lang.Name; Ext = $_.Extension.ToLowerInvariant() }
+    } | Where-Object { -not $want -or $_.Language -eq $want })
+    # "Basic" first, then by name
+    return @($out | Sort-Object @{ Expression = { if ($_.Name -match ' - Basic$') { 0 } else { 1 } } }, Name)
+}
+
+function Get-CPDefaultTemplatePath {
+    <# The template "Reset after saving" uses for this language: your choice in Settings, else "<Language> - Basic". #>
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$Extension)
+    $lang = Get-CPLanguage $Extension
+    $all = @(Get-CPTemplates -Extension $Extension)
+    $chosen = $null
+    if ($Config.DefaultTemplates -and $Config.DefaultTemplates.Contains($lang.Name)) { $chosen = [string]$Config.DefaultTemplates[$lang.Name] }
+    $t = $all | Where-Object { $_.Name -eq $chosen } | Select-Object -First 1
+    if (-not $t) { $t = $all | Select-Object -First 1 }
+    if ($t) { return $t.Path }
+    return $null
 }
 
 function Reset-CPPracticeFile {
-    param([Parameter(Mandatory)][string]$MainCppPath, [Parameter(Mandatory)][string]$TemplatePath)
-    Initialize-CPTemplate $TemplatePath
-    $t = Read-CPTextFile $TemplatePath
-    Write-CPTextFile -Path $MainCppPath -Text $t
+    <# Writes a template into the practice file. With -Config, picks the default template for the file's language. #>
+    param([Parameter(Mandatory)][string]$MainCppPath, [string]$TemplatePath, $Config)
+    if (-not $TemplatePath -and $Config) { $TemplatePath = Get-CPDefaultTemplatePath -Config $Config -Extension ([IO.Path]::GetExtension($MainCppPath)) }
+    if (-not $TemplatePath) { throw "No template found for $([IO.Path]::GetExtension($MainCppPath)) files." }
+    if (-not (Test-Path -LiteralPath $TemplatePath)) { Write-CPTextFile -Path $TemplatePath -Text ((Get-CPLegacyTemplate) -replace "\r?\n", "`r`n") }
+    Write-CPTextFile -Path $MainCppPath -Text (Read-CPTextFile $TemplatePath)
+}
+
+function Initialize-CPTemplate {
+    <# v2.0 compatibility: makes sure the built-in templates exist. #>
+    param([string]$TemplatePath)
+    Initialize-CPTemplates | Out-Null
 }
 
 function Add-CPHeaderFields {
@@ -881,12 +1402,13 @@ function Add-CPHeaderFields {
     $code = Read-CPTextFile $Path
     $h = Read-CPHeader $code
     $f = $h.Fields
+    $style = (Get-CPLanguage $Path).Style
     if ($h.HasHeader) {
         foreach ($k in @('Problem Name', 'Problem Link', 'Difficulty', 'Topics', 'Notes')) { if (-not $f.Contains($k)) { $f[$k] = '' } }
-        $new = (ConvertTo-CPHeader -Fields $f -Newline $h.Newline) + $h.Newline + $h.Body
+        $new = $h.Prefix + (ConvertTo-CPHeader -Fields $f -Newline $h.Newline -Style $style) + $h.Newline + $h.Body
     } else {
         $f = [ordered]@{ 'Problem Name' = ''; 'Problem Link' = ''; 'Difficulty' = ''; 'Topics' = ''; 'Notes' = '' }
-        $new = (ConvertTo-CPHeader -Fields $f -Newline $h.Newline) + $h.Newline + $h.Newline + $code
+        $new = (ConvertTo-CPHeader -Fields $f -Newline $h.Newline -Style $style) + $h.Newline + $h.Newline + $code
     }
     if ($new -ne $code) { Write-CPTextFile -Path $Path -Text $new; return $true }
     return $false
@@ -913,14 +1435,21 @@ function Invoke-CPQuickSave {
     try {
         $problems = @(Test-CPConfig $Config)
         if ($problems.Count) { $out.Summary = $problems + @('Fix it in Settings (Start Menu > CP Solution Saver - Settings).'); return $out }
-        & $emit "File: $($Config.MainCppPath)"
-        $code = Read-CPTextFile $Config.MainCppPath
-        $info = New-CPSolutionInfo -Code $code -Fetch:([bool]$Config.AutoFetch)
+        $practice = Get-CPActivePracticeFile $Config
+        $Config.MainCppPath = $practice
+        $fileName = [IO.Path]::GetFileName($practice)
+        & $emit "File: $practice (most recently saved practice file)"
+        $code = Read-CPTextFile $practice
+        $info = New-CPSolutionInfo -Code $code -Fetch:([bool]$Config.AutoFetch) -Extension ([IO.Path]::GetExtension($practice))
         if ($info.Metadata) { & $emit $info.Metadata.Message }
+        if (-not $info.Link) {
+            $out.Summary = @("No problem link in the header of $fileName.", "The link is required: it identifies the problem, so the same problem is never saved twice.", "Add 'Problem Link: https://...' and try again, or open the full window with Ctrl+Alt+Shift+S.")
+            return $out
+        }
         if (-not $info.Name) {
             $out.Summary = @('No problem name found.')
             if ($info.Metadata -and -not $info.Metadata.Ok) { $out.Summary += $info.Metadata.Message }
-            $out.Summary += @("Fill 'Problem Name:' (or a Codeforces/LeetCode 'Problem Link:') in the header of main.cpp,", 'or open the full window with Ctrl+Alt+Shift+S.')
+            $out.Summary += @("Fill 'Problem Name:' in the header of $fileName (Codeforces/LeetCode/AtCoder/CSES names are looked up from the link),", 'or open the full window with Ctrl+Alt+Shift+S.')
             return $out
         }
         $res = Save-CPSolution -Info $info -RepoPath $Config.RepoPath -Push:([bool]$Config.PushAfterSave) -UpdateIndexes:([bool]$Config.UpdateIndexes) -Log $emit
@@ -932,18 +1461,18 @@ function Invoke-CPQuickSave {
             $out.Success = $true
             if (-not $res.Commit) {
                 $out.Title = "Already saved: $($info.Name)"
-                $out.Summary = @("$($res.RelPath) is already up to date - nothing new to push.")
+                $out.Summary = @("$($res.RelPath) is already up to date (same code) - nothing new to push.")
             } else {
                 $state = if ($res.IsUpdate) { 'updated' } else { 'new' }
                 $out.Title = "Saved: $($info.Name)"
                 $out.Summary = @("$($res.RelPath) ($state)")
                 if ($details) { $out.Summary += ($details -join ' | ') }
                 $out.Summary += $(if ($res.Pushed) { 'Pushed to GitHub.' } elseif ($Config.PushAfterSave) { 'Committed locally (push skipped).' } else { 'Committed locally (push is off in Settings).' })
-                if ($Config.ResetAfterSave) {
-                    Reset-CPPracticeFile -MainCppPath $Config.MainCppPath -TemplatePath $Config.TemplatePath
-                    $out.Summary += 'main.cpp reset to the template.'
-                    & $emit 'main.cpp reset to the template.'
-                }
+            }
+            if ($Config.ResetAfterSave) {
+                Reset-CPPracticeFile -MainCppPath $practice -Config $Config
+                $out.Summary += "$fileName reset to the template."
+                & $emit "$fileName reset to the template."
             }
         } else {
             $err = @($lines | Where-Object { $_ -like 'ERROR*' }) | Select-Object -Last 1
@@ -982,15 +1511,30 @@ function Backup-CPPracticeFile {
 
 function Get-CPBackupDir { Join-Path (Get-CPDataDir) 'backups' }
 
+function Get-CPImportTarget {
+    <# The practice file a saved solution would be loaded into (same language), or $null. #>
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$RelPath)
+    return (Get-CPPracticeFileFor -Config $Config -Extension ([IO.Path]::GetExtension($RelPath)))
+}
+
 function Import-CPSolution {
-    <# Loads a saved solution (repo-relative path) into main.cpp, after backing main.cpp up. Returns the backup path. #>
+    <#
+      Loads a saved solution (repo-relative path) into the practice file of
+      the same language (main.cpp for .cpp, main.py for .py ...), after backing
+      that file up. Returns the backup path.
+    #>
     param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$RelPath)
     $src = Join-Path $Config.RepoPath $RelPath
     if (-not (Test-Path -LiteralPath $src)) { throw "Solution file not found: $src" }
+    $target = Get-CPImportTarget -Config $Config -RelPath $RelPath
+    if (-not $target) {
+        $lang = Get-CPLanguage $RelPath
+        throw "No $($lang.Name) practice file is set up ($($lang.Ext)). Add one in Settings > Practice files, then try again."
+    }
     $keep = 30
     if ($Config.Contains('BackupsToKeep') -and $Config.BackupsToKeep) { $keep = [int]$Config.BackupsToKeep }
-    $backup = Backup-CPPracticeFile -Path $Config.MainCppPath -Keep $keep
-    Write-CPTextFile -Path $Config.MainCppPath -Text (Read-CPTextFile $src)
+    $backup = Backup-CPPracticeFile -Path $target -Keep $keep
+    Write-CPTextFile -Path $target -Text (Read-CPTextFile $src)
     return $backup
 }
 

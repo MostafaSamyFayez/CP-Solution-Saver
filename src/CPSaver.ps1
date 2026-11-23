@@ -40,8 +40,12 @@ Import-Module (Join-Path $PSScriptRoot 'CPSaver.Core.psm1') -Force -DisableNameC
 if ($Version) { "CP Solution Saver $(Get-CPAppVersion)"; return }
 if (-not $ConfigPath) { $ConfigPath = Get-CPDefaultConfigPath }
 $config = Get-CPConfig -Path $ConfigPath
-if ($MainCpp) { $config.MainCppPath = $MainCpp }
-Initialize-CPTemplate $config.TemplatePath
+if ($MainCpp) {
+    # -MainCpp: use this practice file (and remember it in the list for this run)
+    $config.MainCppPath = (Resolve-Path -LiteralPath $MainCpp).ProviderPath
+    if (-not (@($config.PracticeFiles) | Where-Object { $_ -ieq $config.MainCppPath })) { $config.PracticeFiles = @($config.PracticeFiles) + @($config.MainCppPath) }
+}
+Initialize-CPTemplates | Out-Null
 
 $isWindowsHost = ($env:OS -eq 'Windows_NT')
 
@@ -50,6 +54,7 @@ if ($Quick) {
     if ($NoFetch) { $config.AutoFetch = $false }
     if ($NoPush) { $config.PushAfterSave = $false }
     if ($NoReset) { $config.ResetAfterSave = $false }
+    if ($MainCpp) { $config.PracticeFiles = @($config.MainCppPath) }
     $res = Invoke-CPQuickSave -Config $config -Log { param($m) Write-Verbose $m }
     $res.Log | ForEach-Object { Write-Output $_ }
     if ($isWindowsHost -and -not $NoNotify) {
@@ -99,15 +104,19 @@ if ($RebuildIndex) {
     exit 0
 }
 
-$code = Read-CPTextFile $config.MainCppPath
+$practice = if ($MainCpp) { $config.MainCppPath } else { Get-CPActivePracticeFile $config }
+$code = Read-CPTextFile $practice
 $fetch = (-not $NoFetch) -and [bool]$config.AutoFetch
-$info = New-CPSolutionInfo -Code $code -Fetch:$fetch
+$info = New-CPSolutionInfo -Code $code -Fetch:$fetch -Extension ([IO.Path]::GetExtension($practice))
 
+if (-not $info.Link -and -not $Yes) { $info.Link = (Read-Host 'Problem Link is empty (required). Enter it').Trim(); $info.Platform = (Get-CPPlatformInfo $info.Link).Platform; if (-not $info.Id) { $info.Id = (Get-CPPlatformInfo $info.Link).Id } }
+if (-not $info.Link) { Say 'The problem link is required (fill "Problem Link:" in the header). It identifies the problem.' Red; exit 1 }
 if (-not $info.Name -and -not $Yes) { $info.Name = (Read-Host 'Problem Name is empty. Enter it').Trim() }
 if (-not $info.Name) { Say 'A problem name is required (fill "Problem Name:" in the header).' Red; exit 1 }
 Update-CPSolutionPath $info
 
 Say ''
+Say "  File       : $practice ($($info.Language))" DarkGray
 Say "  Problem    : $($info.Name)" White
 Say "  Link       : $($info.Link)"
 Say "  Platform   : $($info.Platform)   ID: $($info.Id)"
@@ -116,7 +125,7 @@ Say "  Topics     : $(@($info.Topics) -join ', ')"
 Say "  Will save  : $($info.RelPath)" Cyan
 if ($info.Metadata) { Say "  ($($info.Metadata.Message))" DarkGray }
 $existing = Find-CPExistingSolution -RepoPath $repo -Info $info
-if ($existing) { Say "  Note: already saved as $existing ($(if ($KeepBoth) { 'will keep both' } else { 'will update it' }))" Yellow }
+if ($existing) { Say "  Note: solved before - saved as $existing ($(if ($KeepBoth) { 'will keep both' } else { 'will update it' }))" Yellow }
 Say ''
 
 if (-not $Yes) {
@@ -133,7 +142,7 @@ Say 'Done.' Green
 
 $doReset = (-not $NoReset) -and [bool]$config.ResetAfterSave
 if (-not $NoReset -and -not $Yes -and -not $config.ResetAfterSave) {
-    $doReset = (Read-Host 'Reset main.cpp to the template for the next problem? (y/N)') -match '^[yY]'
+    $doReset = (Read-Host "Reset $([IO.Path]::GetFileName($practice)) to the template for the next problem? (y/N)") -match '^[yY]'
 }
-if ($doReset) { Reset-CPPracticeFile -MainCppPath $config.MainCppPath -TemplatePath $config.TemplatePath; Say 'main.cpp reset to template.' DarkGray }
+if ($doReset) { Reset-CPPracticeFile -MainCppPath $practice -Config $config; Say "$([IO.Path]::GetFileName($practice)) reset to the template." DarkGray }
 exit 0

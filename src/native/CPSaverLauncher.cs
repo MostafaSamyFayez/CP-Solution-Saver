@@ -43,6 +43,8 @@ namespace CPSaverNative
                     if (EventWaitHandle.TryOpenExisting(prefix + "_cmd_open", out ev)) { ev.Dispose(); return 0; }
                 }
 
+                if (cmd == "exit") return 0;   // nothing is running: nothing to close
+
                 string script = Path.Combine(dir, "CPSaver.ps1");
                 string ps = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
                 var psi = new ProcessStartInfo(ps,

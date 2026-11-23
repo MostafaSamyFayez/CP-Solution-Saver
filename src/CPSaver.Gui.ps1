@@ -988,13 +988,14 @@ function Show-CPBrowser {
 
     # filter row
     $flt = New-Object System.Windows.Forms.TableLayoutPanel
-    $flt.Dock = 'Fill'; $flt.AutoSize = $true; $flt.ColumnCount = 12; $flt.RowCount = 1; $flt.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 4)
+    # fixed height + Dock Fill (not AutoSize), so the search box gets all the spare width
+    $flt.Dock = 'Fill'; $flt.AutoSize = $false; $flt.Height = 38; $flt.ColumnCount = 12; $flt.RowCount = 1; $flt.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 4)
     foreach ($w in @(0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)) {
         if ($w) { [void]$flt.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $w))) }
         else { [void]$flt.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize))) }
     }
     $mkCombo = { $c = New-Object System.Windows.Forms.ComboBox; $c.DropDownStyle = 'DropDownList'; $c.Font = $script:CPFont; $c.Width = 150; $c.Anchor = [System.Windows.Forms.AnchorStyles]::Left; $c }
-    $b.Search = New-CPTextBox; $b.Search.MinimumSize = New-Object System.Drawing.Size(220, 0)
+    $b.Search = New-CPTextBox
     $b.Platform = & $mkCombo; $b.Topic = & $mkCombo; $b.Topic.Width = 180; $b.Diff = & $mkCombo; $b.Lang = & $mkCombo; $b.Lang.Width = 110
     $b.Clear = New-CPButton 'Clear'
     $flt.Controls.Add((New-CPLabel 'Search:'), 0, 0); $flt.Controls.Add($b.Search, 1, 0)

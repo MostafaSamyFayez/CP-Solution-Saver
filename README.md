@@ -1,5 +1,11 @@
 # CP Solution Saver
 
+[![Download for Windows](https://img.shields.io/badge/Download%20for%20Windows-CP--Solution--Saver.zip-2ea44f?style=for-the-badge&logo=windows)](https://github.com/MostafaSamyFayez/CP-Solution-Saver/releases/latest/download/CP-Solution-Saver.zip)
+[![Latest release](https://img.shields.io/github/v/release/MostafaSamyFayez/CP-Solution-Saver?style=for-the-badge&label=latest)](https://github.com/MostafaSamyFayez/CP-Solution-Saver/releases/latest)
+
+**[Download CP-Solution-Saver.zip](https://github.com/MostafaSamyFayez/CP-Solution-Saver/releases/latest/download/CP-Solution-Saver.zip)**, extract it, and double-click **`Install.bat`**.
+Needs [Git for Windows](https://git-scm.com/download/win). See [Install](#install) for details.
+
 Save an accepted competitive-programming solution from your practice file
 (`main.cpp`, `main.c` or `main.py`) to your GitHub solutions repo **with one click**: it gets a clean file name, the
 right folder, a complete header (name, link, difficulty, topics, date), and it
@@ -16,8 +22,6 @@ file). C++, C and Python. No admin rights, no extra software besides Git.
 **Fast:** a tiny helper waits in the system tray, so the shortcuts open windows instantly
 (about 0.01 s to reach the app, instead of 2-4 s to start PowerShell every time), and online
 lookups and GitHub pushes run in the background so the window never freezes.
-
-**Get it:** [download CP-Solution-Saver.zip](https://github.com/MostafaSamyFayez/CP-Solution-Saver/releases/latest/download/CP-Solution-Saver.zip) > extract > double-click **Install.bat**. Details in [Install](#install).
 
 ![Main window](app/docs/screenshot-main.png)
 

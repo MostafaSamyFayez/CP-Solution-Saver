@@ -277,6 +277,8 @@ try {
         Check 'no identity detected' (-not (Get-CPGitIdentity $noId).Ok)
         $bad = $false; try { Set-CPGitIdentity -Name 'A' -Email 'not-an-email' } catch { $bad = $true }
         Check 'bad email rejected' $bad
+        $emptyMsg = ''; try { Set-CPGitIdentity -Name 'A' -Email '' } catch { $emptyMsg = $_.Exception.Message }
+        Check 'empty email -> friendly message' ($emptyMsg -like 'Enter a valid email*') $emptyMsg
         Set-CPGitIdentity -Name 'Test User' -Email 'test@example.com'
         $id = Get-CPGitIdentity $noId
         Check 'identity saved and read back' ($id.Ok -and $id.Name -eq 'Test User' -and $id.Email -eq 'test@example.com')

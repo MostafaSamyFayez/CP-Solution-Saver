@@ -947,7 +947,7 @@ function Get-CPGitIdentity {
 
 function Set-CPGitIdentity {
     <# Saves the name + email for git on this PC (git config --global), once. #>
-    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Email)
+    param([string]$Name = '', [string]$Email = '')
     $Name = $Name.Trim(); $Email = $Email.Trim()
     if (-not $Name) { throw 'Enter your name.' }
     if ($Email -notmatch '^[^@\s]+@[^@\s]+$') { throw 'Enter a valid email address (like you@example.com).' }

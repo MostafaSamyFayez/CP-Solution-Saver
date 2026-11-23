@@ -298,7 +298,7 @@ function Show-CPGitIdentityDialog {
     param([string]$Reason = '')
     $f = New-CPForm 'CP Solution Saver - Git name and email' 560 330
     $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.MinimizeBox = $false; $f.TopMost = $true
-    $hdr = New-CPHeader 'Tell Git who you are' 'One-time setup on this PC'
+    $hdr = New-CPHeader 'Tell Git who you are' 'One-time setup on this PC'; $hdr.Right.Visible = $false
     $grid = New-Object System.Windows.Forms.TableLayoutPanel
     $grid.Dock = 'Fill'; $grid.ColumnCount = 2; $grid.Padding = New-Object System.Windows.Forms.Padding(16, 12, 16, 10)
     [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))

@@ -1,0 +1,3 @@
+# test / temp files
+*.log
+.vscode/

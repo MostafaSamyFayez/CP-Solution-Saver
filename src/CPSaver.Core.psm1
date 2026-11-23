@@ -462,7 +462,7 @@ function New-CPSolutionInfo {
     foreach ($k in $Overrides.Keys) { $info[$k] = $Overrides[$k] }
 
     $pi = Get-CPPlatformInfo $info.Link
-    if (-not $info.Platform) { $info.Platform = $pi.Platform }
+    if (-not $info.Platform -and $info.Link) { $info.Platform = $pi.Platform }
     if (-not $info.Id) { $info.Id = $pi.Id }
 
     if ($Fetch -and $info.Link) {
@@ -734,6 +734,7 @@ function Save-CPSolution {
     if (-not (Test-CPGitAvailable)) { & $emit 'ERROR: git is not installed or not on PATH.'; return $result }
     if (-not (Test-Path -LiteralPath (Join-Path $RepoPath '.git'))) { & $emit "ERROR: '$RepoPath' is not a git repository."; return $result }
 
+    if (-not $Info.Platform) { $Info.Platform = (Get-CPPlatformInfo $Info.Link).Platform }
     Update-CPSolutionPath $Info
     $hasUpstream = (Invoke-CPGit $RepoPath rev-parse --abbrev-ref --symbolic-full-name '@{u}').Code -eq 0
 

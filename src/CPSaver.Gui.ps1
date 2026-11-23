@@ -126,7 +126,7 @@ function Show-CPSettingsDialog {
 
     $f = New-Object System.Windows.Forms.Form
     $f.Text = 'CP Solution Saver - Settings'; $f.Font = $script:CPFont; $f.StartPosition = 'CenterScreen'
-    $f.Size = New-Object System.Drawing.Size(760, 520); $f.MinimumSize = New-Object System.Drawing.Size(640, 480)
+    $f.Size = New-Object System.Drawing.Size(800, 640); $f.MinimumSize = New-Object System.Drawing.Size(680, 560)
     $f.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
     $ico = Get-CPAppIcon; if ($ico) { $f.Icon = $ico }
 
@@ -144,18 +144,38 @@ function Show-CPSettingsDialog {
         $grid.Controls.Add($il, 0, $row); $grid.SetColumnSpan($il, 3); $row++
     }
 
-    # practice file
-    $grid.Controls.Add((New-CPLabel 'Practice file (main.cpp):'), 0, $row)
-    $mainBox = New-CPTextBox; $mainBox.Text = $Config.MainCppPath
-    $grid.Controls.Add($mainBox, 1, $row)
-    $mainBrowse = New-CPButton 'Browse...'
-    $mainBrowse.Add_Click({
+    # practice files (one per language)
+    $grid.Controls.Add((New-CPLabel 'Practice files:'), 0, $row)
+    $pfList = New-Object System.Windows.Forms.ListBox
+    $pfList.Dock = 'Fill'; $pfList.Font = $script:CPFont; $pfList.Height = 72; $pfList.HorizontalScrollbar = $true
+    foreach ($p in @($Config.PracticeFiles)) { if ($p) { [void]$pfList.Items.Add($p) } }
+    if ($pfList.Items.Count -eq 0 -and $Config.MainCppPath) { [void]$pfList.Items.Add($Config.MainCppPath) }
+    $grid.Controls.Add($pfList, 1, $row)
+    $pfBtns = New-Object System.Windows.Forms.FlowLayoutPanel; $pfBtns.AutoSize = $true; $pfBtns.FlowDirection = 'TopDown'
+    $pfAdd = New-CPButton 'Add...'; $pfRemove = New-CPButton 'Remove'
+    $pfBtns.Controls.Add($pfAdd); $pfBtns.Controls.Add($pfRemove)
+    $grid.Controls.Add($pfBtns, 2, $row); $row++
+    $pfHint = New-CPLabel 'The file you write solutions in, one per language (e.g. main.cpp, main.c, main.py). The one you saved last is used.'
+    $pfHint.ForeColor = [System.Drawing.Color]::Gray; $pfHint.MaximumSize = New-Object System.Drawing.Size(560, 0); $pfHint.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 6)
+    $grid.Controls.Add($pfHint, 1, $row); $grid.SetColumnSpan($pfHint, 2); $row++
+    $pfAdd.Add_Click({
         $d = New-Object System.Windows.Forms.OpenFileDialog
-        $d.Filter = 'C++ files (*.cpp)|*.cpp|All files (*.*)|*.*'; $d.Title = 'Select the main.cpp you practice in'
-        if ($mainBox.Text -and (Test-Path -LiteralPath $mainBox.Text)) { $d.InitialDirectory = Split-Path $mainBox.Text -Parent }
-        if ($d.ShowDialog() -eq 'OK') { $mainBox.Text = $d.FileName }
+        $d.Filter = 'Source files (*.cpp;*.c;*.py;*.java;*.cc)|*.cpp;*.c;*.py;*.java;*.cc|All files (*.*)|*.*'
+        $d.Title = 'Select a file you practice in (main.cpp, main.c, main.py ...)'
+        if ($pfList.Items.Count) { $d.InitialDirectory = Split-Path ([string]$pfList.Items[$pfList.Items.Count - 1]) -Parent }
+        if ($d.ShowDialog() -eq 'OK') {
+            $newLang = (Get-CPLanguage $d.FileName).Name
+            foreach ($existing in @($pfList.Items)) {
+                if ((Get-CPLanguage ([string]$existing)).Name -eq $newLang -and ([string]$existing) -ine $d.FileName) {
+                    $a = [System.Windows.Forms.MessageBox]::Show("You already have a $newLang practice file:`n$existing`n`nReplace it with:`n$($d.FileName)?", 'Practice files', 'YesNo', 'Question')
+                    if ($a -ne 'Yes') { return }
+                    $pfList.Items.Remove($existing)
+                }
+            }
+            if (-not (@($pfList.Items) | Where-Object { ([string]$_) -ieq $d.FileName })) { [void]$pfList.Items.Add($d.FileName) }
+        }
     })
-    $grid.Controls.Add($mainBrowse, 2, $row); $row++
+    $pfRemove.Add_Click({ if ($pfList.SelectedIndex -ge 0) { $pfList.Items.RemoveAt($pfList.SelectedIndex) } })
 
     # repo folder
     $grid.Controls.Add((New-CPLabel 'Solutions repo folder:'), 0, $row)
@@ -211,13 +231,14 @@ function Show-CPSettingsDialog {
         }
     })
 
-    # template
-    $grid.Controls.Add((New-CPLabel 'New-problem template:'), 0, $row)
-    $tplLabel = New-CPLabel $Config.TemplatePath; $tplLabel.ForeColor = [System.Drawing.Color]::DimGray
+    # templates
+    $grid.Controls.Add((New-CPLabel 'Code templates:'), 0, $row)
+    $tplLabel = New-CPLabel 'Choose the template used by "Reset after saving", per language, or load one now.'
+    $tplLabel.ForeColor = [System.Drawing.Color]::DimGray; $tplLabel.MaximumSize = New-Object System.Drawing.Size(520, 0)
     $grid.Controls.Add($tplLabel, 1, $row)
     $tplBtns = New-Object System.Windows.Forms.FlowLayoutPanel; $tplBtns.AutoSize = $true
-    $tplEdit = New-CPButton 'Edit'
-    $tplEdit.Add_Click({ Initialize-CPTemplate $Config.TemplatePath; Start-Process notepad.exe -ArgumentList "`"$($Config.TemplatePath)`"" })
+    $tplEdit = New-CPButton 'Templates...'
+    $tplEdit.Add_Click({ Invoke-CPSafe -What 'Templates' { Show-CPTemplatePicker -Config $Config -ConfigPath $ConfigPath | Out-Null } })
     $tplBtns.Controls.Add($tplEdit)
     $grid.Controls.Add($tplBtns, 2, $row); $row++
 
@@ -227,17 +248,17 @@ function Show-CPSettingsDialog {
     $mk = { param($text, $val) $c = New-Object System.Windows.Forms.CheckBox; $c.Text = $text; $c.AutoSize = $true; $c.Checked = [bool]$val; $c.Font = $script:CPFont; $opts.Controls.Add($c); $c }
     $cFetch = & $mk 'Look up problem name, difficulty and topics online (Codeforces, LeetCode, AtCoder, CSES)' $Config.AutoFetch
     $cPush  = & $mk 'Push to GitHub after saving' $Config.PushAfterSave
-    $cReset = & $mk 'Reset main.cpp to the template after saving' $Config.ResetAfterSave
+    $cReset = & $mk 'Reset the practice file to its template after a successful save (recommended)' $Config.ResetAfterSave
     $cIdx   = & $mk 'Update README progress and topic / difficulty indexes' $Config.UpdateIndexes
-    $cDlg   = & $mk 'Quick save (Ctrl+Alt+Shift+F): show a message box instead of a Windows notification' ($Config.QuickSaveNotify -eq 'dialog')
+    $cDlg   = & $mk 'Quick save (Ctrl+Alt+Shift+F): show a Windows notification instead of a message box' ($Config.QuickSaveNotify -eq 'notification')
     $grid.Controls.Add($opts, 0, $row); $grid.SetColumnSpan($opts, 3); $row++
 
-    $upg = New-CPButton 'Add Difficulty/Topics fields to my main.cpp header'
+    $upg = New-CPButton 'Add Difficulty/Topics fields to my practice files'' headers'
     $upg.Add_Click({
-        Invoke-CPSafe -What 'Updating main.cpp' {
-            if (-not (Test-Path -LiteralPath $mainBox.Text)) { throw 'Choose the practice file first.' }
-            $changed = Add-CPHeaderFields $mainBox.Text
-            $msg = if ($changed) { 'Added the missing header fields. Your code was not changed.' } else { 'The header already has all fields.' }
+        Invoke-CPSafe -What 'Updating the headers' {
+            $done = @()
+            foreach ($p in @($pfList.Items)) { if (Test-Path -LiteralPath ([string]$p)) { if (Add-CPHeaderFields ([string]$p)) { $done += [IO.Path]::GetFileName([string]$p) } } }
+            $msg = if ($done.Count) { "Added the missing header fields to: $($done -join ', ').`nYour code was not changed." } else { 'The headers already have all fields.' }
             [System.Windows.Forms.MessageBox]::Show($msg, 'CP Solution Saver') | Out-Null
         }
     })
@@ -253,11 +274,13 @@ function Show-CPSettingsDialog {
     $grid.RowCount = $row
 
     $ok.Add_Click({
-        $Config.MainCppPath = $mainBox.Text.Trim('"', ' ')
+        $Config.PracticeFiles = @($pfList.Items | ForEach-Object { ([string]$_).Trim('"', ' ') })
+        $active = Get-CPActivePracticeFile $Config
+        $Config.MainCppPath = $(if ($active) { $active } elseif ($Config.PracticeFiles.Count) { $Config.PracticeFiles[0] } else { '' })
         $Config.RepoPath = $repoBox.Text.Trim('"', ' ')
         $Config.AutoFetch = $cFetch.Checked; $Config.PushAfterSave = $cPush.Checked
         $Config.ResetAfterSave = $cReset.Checked; $Config.UpdateIndexes = $cIdx.Checked
-        $Config.QuickSaveNotify = $(if ($cDlg.Checked) { 'dialog' } else { 'notification' })
+        $Config.QuickSaveNotify = $(if ($cDlg.Checked) { 'notification' } else { 'dialog' })
         $problems = @(Test-CPConfig $Config)
         if ($problems.Count) {
             $a = [System.Windows.Forms.MessageBox]::Show(($problems -join "`n") + "`n`nSave anyway?", 'Settings', 'YesNo', 'Warning')
@@ -284,7 +307,7 @@ function Show-CPMainWindow {
     }
 
     $ui = @{}
-    $st = @{ Info = $null; LoadedMtime = [datetime]::MinValue; Existing = $null; Busy = $false }
+    $st = @{ Info = $null; LoadedMtime = [datetime]::MinValue; Existing = $null; Busy = $false; FillingFiles = $false }
 
     $f = New-Object System.Windows.Forms.Form
     $f.Text = "CP Solution Saver $(Get-CPAppVersion)"; $f.Font = $script:CPFont; $f.StartPosition = 'CenterScreen'
@@ -302,18 +325,22 @@ function Show-CPMainWindow {
     $title = New-CPLabel 'Save an accepted solution' $script:CPFontTitle; $title.ForeColor = $script:CPAccent
     $grid.Controls.Add($title, 0, $row); $grid.SetColumnSpan($title, 3); $row++
 
-    # source line
-    $ui.Source = New-CPLabel ''; $ui.Source.ForeColor = [System.Drawing.Color]::DimGray
-    $ui.Source.MaximumSize = New-Object System.Drawing.Size(700, 0)
-    $grid.Controls.Add($ui.Source, 0, $row); $grid.SetColumnSpan($ui.Source, 2)
-    $ui.Reload = New-CPButton 'Reload main.cpp'
+    # practice file (most recently saved one is picked) + status line
+    $grid.Controls.Add((New-CPLabel 'Practice file:'), 0, $row)
+    $ui.File = New-Object System.Windows.Forms.ComboBox
+    $ui.File.DropDownStyle = 'DropDownList'; $ui.File.Font = $script:CPFont; $ui.File.Dock = 'Fill'
+    $grid.Controls.Add($ui.File, 1, $row)
+    $ui.Reload = New-CPButton 'Reload (F5)'
     $grid.Controls.Add($ui.Reload, 2, $row); $row++
+    $ui.Source = New-CPLabel ''; $ui.Source.ForeColor = [System.Drawing.Color]::DimGray
+    $ui.Source.MaximumSize = New-Object System.Drawing.Size(700, 0); $ui.Source.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 4)
+    $grid.Controls.Add($ui.Source, 1, $row); $grid.SetColumnSpan($ui.Source, 2); $row++
 
     # fields
     $grid.Controls.Add((New-CPLabel 'Problem name:'), 0, $row)
     $ui.Name = New-CPTextBox; $grid.Controls.Add($ui.Name, 1, $row); $grid.SetColumnSpan($ui.Name, 2); $row++
 
-    $grid.Controls.Add((New-CPLabel 'Problem link:'), 0, $row)
+    $grid.Controls.Add((New-CPLabel 'Problem link: *'), 0, $row)
     $ui.Link = New-CPTextBox; $grid.Controls.Add($ui.Link, 1, $row)
     $ui.Fetch = New-CPButton 'Look up online'; $grid.Controls.Add($ui.Fetch, 2, $row); $row++
 
@@ -359,7 +386,7 @@ function Show-CPMainWindow {
     $mk = { param($t, $v) $c = New-Object System.Windows.Forms.CheckBox; $c.Text = $t; $c.Checked = [bool]$v; $c.AutoSize = $true; $c.Margin = New-Object System.Windows.Forms.Padding(3, 6, 18, 3); $opts.Controls.Add($c); $c }
     $ui.OptPush  = & $mk 'Push to GitHub' $Config.PushAfterSave
     $ui.OptIdx   = & $mk 'Update README && indexes' $Config.UpdateIndexes
-    $ui.OptReset = & $mk 'Reset main.cpp after saving' $Config.ResetAfterSave
+    $ui.OptReset = & $mk 'Reset to template after saving' $Config.ResetAfterSave
     $grid.Controls.Add($opts, 0, $row); $grid.SetColumnSpan($opts, 3); $row++
 
     # buttons
@@ -372,7 +399,8 @@ function Show-CPMainWindow {
     $ui.OpenWeb = New-CPButton 'Open on GitHub'
     $ui.Settings = New-CPButton 'Settings'
     $ui.Browse = New-CPButton 'Solved problems...'
-    foreach ($b in @($ui.Save, $ui.Browse, $ui.Rebuild, $ui.OpenFolder, $ui.OpenWeb, $ui.Settings)) { $btns.Controls.Add($b) }
+    $ui.Templates = New-CPButton 'Templates...'
+    foreach ($b in @($ui.Save, $ui.Browse, $ui.Templates, $ui.Rebuild, $ui.OpenFolder, $ui.OpenWeb, $ui.Settings)) { $btns.Controls.Add($b) }
     $grid.Controls.Add($btns, 0, $row); $grid.SetColumnSpan($btns, 3); $row++
 
     $ui.Status = New-CPLabel 'Ready.' $script:CPFontBold
@@ -397,13 +425,20 @@ function Show-CPMainWindow {
         if (-not $st.Info) { return }
         $st.Info.Name = $ui.Name.Text.Trim(); $st.Info.Platform = $ui.Platform.Text.Trim(); $st.Info.Id = $ui.Id.Text.Trim(); $st.Info.Link = $ui.Link.Text.Trim()
         Update-CPSolutionPath $st.Info
+        if (-not $st.Info.Link) { $ui.Target.Text = '(enter the problem link - it is required, it identifies the problem)'; $ui.Target.ForeColor = $script:CPRed; $ui.KeepBoth.Visible = $false; return }
         if (-not $st.Info.RelPath) { $ui.Target.Text = '(enter a problem name)'; $ui.Target.ForeColor = $script:CPRed; $ui.KeepBoth.Visible = $false; return }
-        $st.Existing = $null
-        try { $st.Existing = Find-CPExistingSolution -RepoPath $Config.RepoPath -Info $st.Info } catch { }
+        $st.Existing = $null; $before = @()
+        try {
+            $before = @(Find-CPSolvedBefore -RepoPath $Config.RepoPath -Info $st.Info)
+            $st.Existing = Find-CPExistingSolution -RepoPath $Config.RepoPath -Info $st.Info
+        } catch { }
         if ($st.Existing) {
-            $ui.Target.Text = "$($st.Existing)   (already saved - will be updated)"; $ui.Target.ForeColor = $script:CPOrange; $ui.KeepBoth.Visible = $true
+            $when = ($before | Where-Object { $_.RelPath -eq $st.Existing } | Select-Object -First 1).DateSolved
+            $ui.Target.Text = "$($st.Existing)   (solved before$(if ($when) { " on $when" }) - will be updated)"; $ui.Target.ForeColor = $script:CPOrange; $ui.KeepBoth.Visible = $true
+        } elseif ($before.Count) {
+            $ui.Target.Text = "$($st.Info.RelPath)   (new $($st.Info.Language) file; solved before in $(@($before | ForEach-Object { $_.Language } | Select-Object -Unique) -join ', '))"; $ui.Target.ForeColor = $script:CPGreen; $ui.KeepBoth.Visible = $false
         } else {
-            $ui.Target.Text = "$($st.Info.RelPath)   (new)"; $ui.Target.ForeColor = $script:CPGreen; $ui.KeepBoth.Visible = $false
+            $ui.Target.Text = "$($st.Info.RelPath)   (new - not solved before)"; $ui.Target.ForeColor = $script:CPGreen; $ui.KeepBoth.Visible = $false
         }
     }
     $timer = New-Object System.Windows.Forms.Timer; $timer.Interval = 450
@@ -434,15 +469,16 @@ function Show-CPMainWindow {
         $path = $Config.MainCppPath
         $code = Read-CPTextFile $path
         $st.LoadedMtime = (Get-Item -LiteralPath $path).LastWriteTime
-        $st.Info = New-CPSolutionInfo -Code $code
+        $st.Info = New-CPSolutionInfo -Code $code -Extension ([IO.Path]::GetExtension($path))
+        $ui.OptReset.Text = "Reset $([IO.Path]::GetFileName($path)) to template after saving"
         $ui.Name.Text = $st.Info.Name; $ui.Link.Text = $st.Info.Link
         $ui.Platform.Text = $st.Info.Platform; $ui.Id.Text = $st.Info.Id
         $ui.Difficulty.Text = $st.Info.Difficulty; $ui.Topics.Text = (@($st.Info.Topics) -join ', ')
         $ui.Notes.Text = ($st.Info.Notes -replace "\r?\n", "`r`n")
         $lines = @($code -split "`n").Count
-        $ui.Source.Text = "From: $path   ($lines lines, saved $(Format-CPAgo $st.LoadedMtime))"
+        $ui.Source.Text = "$($st.Info.Language), $lines lines, saved $(Format-CPAgo $st.LoadedMtime)"; $ui.Source.ForeColor = [System.Drawing.Color]::DimGray
         & $log "Loaded $path"
-        if (-not $st.Info.HasHeader) { & $log 'No problem header found at the top of main.cpp - fill the fields here (or use Settings > Add fields to header).' }
+        if (-not $st.Info.HasHeader) { & $log "No problem header found at the top of $([IO.Path]::GetFileName($path)) - fill the fields here (or use Settings > Add fields to headers)." }
         & $refreshTarget
         if ($AllowFetch -and $Config.AutoFetch -and $st.Info.Link) { & $doFetch }
     }
@@ -452,10 +488,10 @@ function Show-CPMainWindow {
         try {
             $m = (Get-Item -LiteralPath $Config.MainCppPath).LastWriteTime
             if ($m -ne $st.LoadedMtime) {
-                $ui.Source.Text = "main.cpp changed on disk $(Format-CPAgo $m) - click 'Reload main.cpp' to load the new version."
+                $ui.Source.Text = "$([IO.Path]::GetFileName($Config.MainCppPath)) changed on disk $(Format-CPAgo $m) - click Reload (F5) to load the new version."
                 $ui.Source.ForeColor = $script:CPOrange
             } else {
-                $ui.Source.Text = ($ui.Source.Text -replace 'saved .*\)$', "saved $(Format-CPAgo $m))"); $ui.Source.ForeColor = [System.Drawing.Color]::DimGray
+                $ui.Source.Text = ($ui.Source.Text -replace 'saved .*$', "saved $(Format-CPAgo $m)"); $ui.Source.ForeColor = [System.Drawing.Color]::DimGray
             }
         } catch { }
     })
@@ -466,12 +502,13 @@ function Show-CPMainWindow {
         try {
             # use the latest code on disk, with the values from the form
             $code = Read-CPTextFile $Config.MainCppPath
-            if ((Get-Item -LiteralPath $Config.MainCppPath).LastWriteTime -ne $st.LoadedMtime) { & $log 'Note: main.cpp changed since it was loaded; saving the newest code from disk.' }
-            $info = New-CPSolutionInfo -Code $code
+            if ((Get-Item -LiteralPath $Config.MainCppPath).LastWriteTime -ne $st.LoadedMtime) { & $log 'Note: the file changed since it was loaded; saving the newest code from disk.' }
+            $info = New-CPSolutionInfo -Code $code -Extension ([IO.Path]::GetExtension($Config.MainCppPath))
             $info.Name = $ui.Name.Text.Trim(); $info.Link = $ui.Link.Text.Trim(); $info.Platform = $ui.Platform.Text.Trim()
             $info.Id = $ui.Id.Text.Trim(); $info.Difficulty = $ui.Difficulty.Text.Trim(); $info.Topics = & $topicsFromBox
             $info.Notes = $ui.Notes.Text.Trim()
             if (-not $info.Platform) { $info.Platform = (Get-CPPlatformInfo $info.Link).Platform }
+            if (-not $info.Link) { & $setStatus 'Enter the problem link first (required).' $script:CPRed; $ui.Link.Focus(); return }
             if (-not $info.Name) { & $setStatus 'Enter the problem name first.' $script:CPRed; return }
             $ui.Log.Clear()
             & $setStatus 'Saving...' ([System.Drawing.Color]::DimGray)
@@ -482,8 +519,8 @@ function Show-CPMainWindow {
                 $msg = if ($res.Pushed) { "Done! $($res.RelPath) is on GitHub." } elseif ($res.Commit) { "Saved and committed $($res.RelPath) (not pushed)." } else { 'Nothing new to save - this exact solution is already in the repo.' }
                 & $setStatus $msg $script:CPGreen
                 if ($ui.OptReset.Checked) {
-                    Reset-CPPracticeFile -MainCppPath $Config.MainCppPath -TemplatePath $Config.TemplatePath
-                    & $log 'main.cpp reset to the template. (If Visual Studio asks, choose "Yes" to reload it.)'
+                    Reset-CPPracticeFile -MainCppPath $Config.MainCppPath -Config $Config
+                    & $log "$([IO.Path]::GetFileName($Config.MainCppPath)) reset to its template. (If Visual Studio asks, choose 'Yes' to reload it.)"
                     & $loadFile $false
                 } else { & $refreshTarget }
             } else {
@@ -495,6 +532,25 @@ function Show-CPMainWindow {
         } finally { $st.Busy = $false; $ui.Save.Enabled = $true; $f.Cursor = 'Default' }
     }
 
+    $fillFiles = {
+        $st.FillingFiles = $true
+        $ui.File.Items.Clear()
+        foreach ($p in @($Config.PracticeFiles)) { if ($p) { [void]$ui.File.Items.Add($p) } }
+        if ($ui.File.Items.Count -eq 0 -and $Config.MainCppPath) { [void]$ui.File.Items.Add($Config.MainCppPath) }
+        $i = -1; for ($k = 0; $k -lt $ui.File.Items.Count; $k++) { if (([string]$ui.File.Items[$k]) -ieq $Config.MainCppPath) { $i = $k } }
+        $ui.File.SelectedIndex = $(if ($i -ge 0) { $i } elseif ($ui.File.Items.Count) { 0 } else { -1 })
+        $st.FillingFiles = $false
+    }
+    $ui.File.Add_SelectedIndexChanged({
+        if ($st.FillingFiles -or $ui.File.SelectedIndex -lt 0) { return }
+        $Config.MainCppPath = [string]$ui.File.SelectedItem
+        Invoke-CPSafe -What 'Loading the file' { $ui.Log.Clear(); & $loadFile $true }
+    })
+    $ui.Templates.Add_Click({
+        Invoke-CPSafe -What 'Templates' {
+            if (Show-CPTemplatePicker -Config $Config -ConfigPath $ConfigPath -Language ((Get-CPLanguage $Config.MainCppPath).Name)) { $ui.Log.Clear(); & $fillFiles; & $loadFile $false; & $log 'Template loaded (old file backed up).' }
+        }
+    })
     $ui.Save.Add_Click({ Invoke-CPSafe -What 'Saving' $doSave })
     $ui.Fetch.Add_Click({ Invoke-CPSafe -What 'Online lookup' $doFetch })
     $ui.Reload.Add_Click({ Invoke-CPSafe -What 'Reload' { $ui.Log.Clear(); & $loadFile $true } })
@@ -519,7 +575,7 @@ function Show-CPMainWindow {
     })
     $ui.Browse.Add_Click({
         Invoke-CPSafe -What 'Solved problems' {
-            Show-CPBrowser -Config $Config -OnLoaded { param($p) $ui.Log.Clear(); & $loadFile $false; & $log "Loaded $p into main.cpp (old main.cpp backed up)." }
+            Show-CPBrowser -Config $Config -OnLoaded { param($p) $ui.Log.Clear(); & $fillFiles; & $loadFile $false; & $log "Loaded $p into $([IO.Path]::GetFileName($Config.MainCppPath)) (old file backed up)." }
         }
     })
     $ui.OpenFolder.Add_Click({ Start-Process explorer.exe -ArgumentList "`"$($Config.RepoPath)`"" })
@@ -533,6 +589,7 @@ function Show-CPMainWindow {
         Invoke-CPSafe -What 'Settings' {
             if (Show-CPSettingsDialog -Config $Config -ConfigPath $ConfigPath) {
                 $ui.OptPush.Checked = $Config.PushAfterSave; $ui.OptIdx.Checked = $Config.UpdateIndexes; $ui.OptReset.Checked = $Config.ResetAfterSave
+                & $fillFiles
                 $ui.Log.Clear(); & $loadFile $true
             }
         }
@@ -545,7 +602,8 @@ function Show-CPMainWindow {
     })
     $f.Add_Shown({
         $f.Activate()
-        Invoke-CPSafe -What 'Loading main.cpp' { & $loadFile $true }
+        & $fillFiles
+        Invoke-CPSafe -What 'Loading the practice file' { & $loadFile $true }
         $mtimeTimer.Start()
     })
     $f.Add_FormClosed({ $timer.Stop(); $mtimeTimer.Stop() })
@@ -647,20 +705,21 @@ function Show-CPBrowser {
 
     # filter row
     $flt = New-Object System.Windows.Forms.TableLayoutPanel
-    $flt.Dock = 'Fill'; $flt.AutoSize = $true; $flt.ColumnCount = 10; $flt.RowCount = 1; $flt.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 4)
-    foreach ($w in @(0, 100, 0, 0, 0, 0, 0, 0, 0, 0)) {
+    $flt.Dock = 'Fill'; $flt.AutoSize = $true; $flt.ColumnCount = 12; $flt.RowCount = 1; $flt.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 4)
+    foreach ($w in @(0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)) {
         if ($w) { [void]$flt.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $w))) }
         else { [void]$flt.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize))) }
     }
     $mkCombo = { $c = New-Object System.Windows.Forms.ComboBox; $c.DropDownStyle = 'DropDownList'; $c.Font = $script:CPFont; $c.Width = 150; $c.Anchor = [System.Windows.Forms.AnchorStyles]::Left; $c }
     $b.Search = New-CPTextBox
-    $b.Platform = & $mkCombo; $b.Topic = & $mkCombo; $b.Topic.Width = 190; $b.Diff = & $mkCombo
+    $b.Platform = & $mkCombo; $b.Topic = & $mkCombo; $b.Topic.Width = 180; $b.Diff = & $mkCombo; $b.Lang = & $mkCombo; $b.Lang.Width = 110
     $b.Clear = New-CPButton 'Clear'
     $flt.Controls.Add((New-CPLabel 'Search:'), 0, 0); $flt.Controls.Add($b.Search, 1, 0)
     $flt.Controls.Add((New-CPLabel '  Platform:'), 2, 0); $flt.Controls.Add($b.Platform, 3, 0)
     $flt.Controls.Add((New-CPLabel '  Topic:'), 4, 0); $flt.Controls.Add($b.Topic, 5, 0)
     $flt.Controls.Add((New-CPLabel '  Difficulty:'), 6, 0); $flt.Controls.Add($b.Diff, 7, 0)
-    $flt.Controls.Add($b.Clear, 8, 0)
+    $flt.Controls.Add((New-CPLabel '  Language:'), 8, 0); $flt.Controls.Add($b.Lang, 9, 0)
+    $flt.Controls.Add($b.Clear, 10, 0)
     $root.Controls.Add($flt, 0, 1)
 
     # grid + preview
@@ -697,7 +756,7 @@ function Show-CPBrowser {
     $b.Status = New-CPLabel ''
     $b.Status.AutoSize = $false; $b.Status.Dock = 'Fill'; $b.Status.AutoEllipsis = $true; $b.Status.TextAlign = 'MiddleLeft'
     $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.AutoSize = $true; $btns.WrapContents = $false
-    $b.Load = New-CPButton 'Load into main.cpp' 170
+    $b.Load = New-CPButton 'Load into practice file' 190
     $b.Load.Font = $script:CPFontBold; $b.Load.BackColor = [System.Drawing.Color]::FromArgb(31, 136, 61); $b.Load.ForeColor = [System.Drawing.Color]::White; $b.Load.FlatStyle = 'Flat'
     $b.OpenLink = New-CPButton 'Open problem page'
     $b.OpenFile = New-CPButton 'Open file'
@@ -711,7 +770,7 @@ function Show-CPBrowser {
 
     # ---------------------------------------------------------------- data
     $dt = New-Object System.Data.DataTable
-    foreach ($c in @('Name', 'Platform', 'ID', 'Difficulty', 'Topics', 'Solved', 'Path', 'Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'SearchText')) { [void]$dt.Columns.Add($c, [string]) }
+    foreach ($c in @('Name', 'Platform', 'ID', 'Difficulty', 'Topics', 'Language', 'Solved', 'Path', 'Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'SearchText')) { [void]$dt.Columns.Add($c, [string]) }
     $view = New-Object System.Data.DataView($dt)
     $st = @{ Total = 0; SortCol = 'Solved'; SortDesc = $true; Loading = $false }
 
@@ -728,23 +787,24 @@ function Show-CPBrowser {
         $dt.Rows.Clear()
         $all = @()
         try { $all = @(Get-CPAllSolutions $Config.RepoPath) } catch { $b.Status.Text = "Could not read the repo: $($_.Exception.Message)" }
-        $plats = @{}; $topics = @{}; $diffs = @{}
+        $plats = @{}; $topics = @{}; $diffs = @{}; $langs = @{}
         foreach ($s in $all) {
             $dg = Get-CPDifficultyGroup $s.Difficulty
             $tl = @($s.Topics | ForEach-Object { $_.ToLowerInvariant() })
             $r = $dt.NewRow()
             $r['Name'] = $s.Name; $r['Platform'] = $s.Platform; $r['ID'] = $s.Id; $r['Difficulty'] = $s.Difficulty
-            $r['Topics'] = ($tl -join ', '); $r['Solved'] = $s.DateSolved; $r['Path'] = $s.RelPath; $r['Link'] = $s.Link
+            $r['Topics'] = ($tl -join ', '); $r['Language'] = $s.Language; $r['Solved'] = $s.DateSolved; $r['Path'] = $s.RelPath; $r['Link'] = $s.Link
             $r['FullPath'] = $s.FullPath; $r['TopicsKey'] = ',' + ($tl -join ',') + ','
             $r['DiffGroup'] = $dg.Label; $r['DiffSort'] = $dg.SortKey
             $r['SearchText'] = (@($s.Name, $s.Id, $s.Platform, $s.RelPath, $s.Notes, ($tl -join ' '), $s.Link) -join ' ').ToLowerInvariant()
             $dt.Rows.Add($r)
-            $plats[$s.Platform] = 1; foreach ($t in $tl) { $topics[$t] = 1 }; $diffs[$dg.Label] = $dg.SortKey
+            $plats[$s.Platform] = 1; foreach ($t in $tl) { $topics[$t] = 1 }; $diffs[$dg.Label] = $dg.SortKey; $langs[$s.Language] = 1
         }
         $st.Total = $all.Count
         & $fillCombo $b.Platform 'All platforms' @($plats.Keys | Sort-Object)
         & $fillCombo $b.Topic 'All topics' @($topics.Keys | Sort-Object)
         & $fillCombo $b.Diff 'All difficulties' @($diffs.Keys | Sort-Object { $diffs[$_] })
+        & $fillCombo $b.Lang 'All' @($langs.Keys | Sort-Object)
         $st.Loading = $false
         & $applyFilter
     }
@@ -758,6 +818,7 @@ function Show-CPBrowser {
         if ($b.Platform.SelectedIndex -gt 0) { $conds.Add("Platform = '" + ([string]$b.Platform.SelectedItem -replace "'", "''") + "'") }
         if ($b.Topic.SelectedIndex -gt 0) { $conds.Add("TopicsKey LIKE '%," + (ConvertTo-CPLikeLiteral ([string]$b.Topic.SelectedItem)) + ",%'") }
         if ($b.Diff.SelectedIndex -gt 0) { $conds.Add("DiffGroup = '" + ([string]$b.Diff.SelectedItem -replace "'", "''") + "'") }
+        if ($b.Lang.SelectedIndex -gt 0) { $conds.Add("Language = '" + ([string]$b.Lang.SelectedItem -replace "'", "''") + "'") }
         $view.RowFilter = ($conds -join ' AND ')
         $sortCol = if ($st.SortCol -eq 'Difficulty') { 'DiffSort' } else { $st.SortCol }
         $view.Sort = "$sortCol $(if ($st.SortDesc) { 'DESC' } else { 'ASC' }), Name ASC"
@@ -769,7 +830,7 @@ function Show-CPBrowser {
     $g.DataSource = $view
     $g.Add_DataBindingComplete({
         foreach ($c in @('Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'SearchText')) { if ($g.Columns[$c]) { $g.Columns[$c].Visible = $false } }
-        $weights = @{ Name = 26; Platform = 10; ID = 8; Difficulty = 9; Topics = 25; Solved = 10; Path = 22 }
+        $weights = @{ Name = 24; Platform = 10; ID = 8; Difficulty = 9; Topics = 22; Language = 8; Solved = 10; Path = 22 }
         foreach ($k in $weights.Keys) { if ($g.Columns[$k]) { $g.Columns[$k].FillWeight = $weights[$k]; $g.Columns[$k].SortMode = 'Programmatic' } }
         foreach ($c in $g.Columns) { if ($c.Name -eq $st.SortCol) { $c.HeaderCell.SortGlyphDirection = $(if ($st.SortDesc) { 'Descending' } else { 'Ascending' }) } else { $c.HeaderCell.SortGlyphDirection = 'None' } }
     })
@@ -796,18 +857,22 @@ function Show-CPBrowser {
     $doLoad = {
         $r = & $current
         if (-not $r) { $b.Status.Text = 'Select a problem first.'; return }
-        $q = "Load '$($r['Name'])' into your main.cpp?`n`n$($Config.MainCppPath)`n`nYour current main.cpp is backed up first (button 'Backups' to find it)."
+        $target = Get-CPImportTarget -Config $Config -RelPath $r['Path']
+        if (-not $target) { throw "No $($r['Language']) practice file is set up. Add one in Settings > Practice files, then try again." }
+        $tn = [IO.Path]::GetFileName($target)
+        $q = "Load '$($r['Name'])' into your $($tn)?`n`n$target`n`nThe current $tn is backed up first (button 'Backups' to find it)."
         if ([System.Windows.Forms.MessageBox]::Show($q, 'Load solution', 'YesNo', 'Question') -ne 'Yes') { return }
         $backup = Import-CPSolution -Config $Config -RelPath $r['Path']
-        $b.Status.Text = "Loaded $($r['Path']) into main.cpp (old main.cpp backed up)."
+        $Config.MainCppPath = $target
+        $b.Status.Text = "Loaded $($r['Path']) into $tn (old $tn backed up)."
         $b.Status.ForeColor = $script:CPGreen
         if ($OnLoaded) { & $OnLoaded $r['Path'] }
-        [System.Windows.Forms.MessageBox]::Show("Loaded into main.cpp.`n`nIf Visual Studio asks whether to reload the file, choose Yes.", 'Load solution') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show("Loaded into $tn.`n`nIf your editor asks whether to reload the file, choose Yes.", 'Load solution') | Out-Null
     }
 
     $b.Search.Add_TextChanged({ & $applyFilter })
-    foreach ($c in @($b.Platform, $b.Topic, $b.Diff)) { $c.Add_SelectedIndexChanged({ & $applyFilter }) }
-    $b.Clear.Add_Click({ $st.Loading = $true; $b.Search.Text = ''; $b.Platform.SelectedIndex = 0; $b.Topic.SelectedIndex = 0; $b.Diff.SelectedIndex = 0; $st.Loading = $false; & $applyFilter })
+    foreach ($c in @($b.Platform, $b.Topic, $b.Diff, $b.Lang)) { $c.Add_SelectedIndexChanged({ & $applyFilter }) }
+    $b.Clear.Add_Click({ $st.Loading = $true; $b.Search.Text = ''; $b.Platform.SelectedIndex = 0; $b.Topic.SelectedIndex = 0; $b.Diff.SelectedIndex = 0; $b.Lang.SelectedIndex = 0; $st.Loading = $false; & $applyFilter })
     $b.Load.Add_Click({ Invoke-CPSafe -What 'Loading the solution' $doLoad })
     $g.Add_CellDoubleClick({ param($s, $e) if ($e.RowIndex -ge 0) { Invoke-CPSafe -What 'Loading the solution' $doLoad } })
     $b.OpenLink.Add_Click({ $r = & $current; if ($r -and $r['Link']) { Start-Process $r['Link'] } else { $b.Status.Text = 'This problem has no link.' } })
@@ -828,4 +893,138 @@ function Show-CPBrowser {
     })
     [void]$f.ShowDialog()
     $f.Dispose()
+}
+
+# ============================================================================
+#  Templates
+# ============================================================================
+function Show-CPTemplatePicker {
+    <#
+      Lists the code templates per language with a preview.
+      "Load into ..." puts a template into the practice file of that language
+      (after a backup); "Use for reset after saving" makes it that language's
+      default. Returns $true if a template was loaded.
+    #>
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$ConfigPath, [string]$Language)
+
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text = 'CP Solution Saver - Code templates'; $f.Font = $script:CPFont; $f.StartPosition = 'CenterScreen'
+    $f.Size = New-Object System.Drawing.Size(980, 660); $f.MinimumSize = New-Object System.Drawing.Size(760, 480)
+    $f.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi; $f.KeyPreview = $true
+    $ico = Get-CPAppIcon; if ($ico) { $f.Icon = $ico }
+    $t = @{ Loaded = $false; Items = @() }
+
+    $root = New-Object System.Windows.Forms.TableLayoutPanel
+    $root.Dock = 'Fill'; $root.ColumnCount = 2; $root.RowCount = 4; $root.Padding = New-Object System.Windows.Forms.Padding(10, 8, 10, 8)
+    [void]$root.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 300)))
+    [void]$root.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    foreach ($rs in @('AutoSize', 'AutoSize', 'Percent', 'AutoSize')) {
+        if ($rs -eq 'Percent') { [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100))) }
+        else { [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize))) }
+    }
+    $title = New-CPLabel 'Code templates' $script:CPFontTitle; $title.ForeColor = $script:CPAccent
+    $root.Controls.Add($title, 0, 0); $root.SetColumnSpan($title, 2)
+
+    $top = New-Object System.Windows.Forms.FlowLayoutPanel; $top.AutoSize = $true; $top.Dock = 'Fill'
+    $top.Controls.Add((New-CPLabel 'Language:'))
+    $lang = New-Object System.Windows.Forms.ComboBox; $lang.DropDownStyle = 'DropDownList'; $lang.Width = 140; $lang.Font = $script:CPFont
+    $top.Controls.Add($lang)
+    $openDir = New-CPButton 'Open templates folder'
+    $top.Controls.Add($openDir)
+    $hint = New-CPLabel '   Add your own: save a file named "C++ - My name.cpp" (or "Python - ....py") in that folder.'
+    $hint.ForeColor = [System.Drawing.Color]::Gray
+    $top.Controls.Add($hint)
+    $root.Controls.Add($top, 0, 1); $root.SetColumnSpan($top, 2)
+
+    $list = New-Object System.Windows.Forms.ListBox
+    $list.Dock = 'Fill'; $list.Font = $script:CPFont; $list.IntegralHeight = $false
+    $root.Controls.Add($list, 0, 2)
+    $preview = New-Object System.Windows.Forms.TextBox
+    $preview.Multiline = $true; $preview.ReadOnly = $true; $preview.ScrollBars = 'Both'; $preview.WordWrap = $false
+    $preview.Font = New-Object System.Drawing.Font('Consolas', 10); $preview.Dock = 'Fill'; $preview.BackColor = [System.Drawing.Color]::FromArgb(250, 250, 250)
+    $root.Controls.Add($preview, 1, 2)
+
+    $bottom = New-Object System.Windows.Forms.TableLayoutPanel
+    $bottom.Dock = 'Fill'; $bottom.AutoSize = $true; $bottom.ColumnCount = 2
+    [void]$bottom.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$bottom.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    $status = New-CPLabel ''; $status.AutoSize = $false; $status.Dock = 'Fill'; $status.AutoEllipsis = $true; $status.TextAlign = 'MiddleLeft'
+    $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.AutoSize = $true; $btns.WrapContents = $false
+    $load = New-CPButton 'Load into practice file' 190
+    $load.Font = $script:CPFontBold; $load.BackColor = [System.Drawing.Color]::FromArgb(31, 136, 61); $load.ForeColor = [System.Drawing.Color]::White; $load.FlatStyle = 'Flat'
+    $useReset = New-CPButton 'Use for "reset after saving"'
+    $edit = New-CPButton 'Edit'
+    $close = New-CPButton 'Close'
+    foreach ($x in @($load, $useReset, $edit, $close)) { $btns.Controls.Add($x) }
+    $bottom.Controls.Add($status, 0, 0); $bottom.Controls.Add($btns, 1, 0)
+    $root.Controls.Add($bottom, 0, 3); $root.SetColumnSpan($bottom, 2)
+    $f.Controls.Add($root)
+
+    $defaultName = {
+        param($language)
+        $p = Get-CPDefaultTemplatePath -Config $Config -Extension (@($t.All | Where-Object { $_.Language -eq $language })[0].Ext)
+        if ($p) { return [IO.Path]::GetFileNameWithoutExtension($p) } else { return '' }
+    }
+    $fillList = {
+        $t.All = @(Get-CPTemplates)
+        $language = [string]$lang.SelectedItem
+        $t.Items = @($t.All | Where-Object { $_.Language -eq $language })
+        $def = & $defaultName $language
+        $list.Items.Clear()
+        foreach ($i in $t.Items) { [void]$list.Items.Add($(if ($i.Name -eq $def) { "$($i.Name)    (used for reset)" } else { $i.Name })) }
+        if ($list.Items.Count) { $list.SelectedIndex = 0 }
+        $target = Get-CPPracticeFileFor -Config $Config -Extension $(if ($t.Items.Count) { $t.Items[0].Ext } else { '.cpp' })
+        $load.Text = $(if ($target) { "Load into $([IO.Path]::GetFileName($target))" } else { "Load (no $language practice file)" })
+        $load.Enabled = [bool]$target
+        $status.Text = "Reset after saving uses: $def"; $status.ForeColor = [System.Drawing.Color]::Black
+    }
+    $current = { if ($list.SelectedIndex -ge 0 -and $list.SelectedIndex -lt $t.Items.Count) { return $t.Items[$list.SelectedIndex] } return $null }
+
+    $list.Add_SelectedIndexChanged({
+        $c = & $current
+        if ($c) { try { $preview.Text = ([IO.File]::ReadAllText($c.Path) -replace "(?<!`r)`n", "`r`n") } catch { $preview.Text = $_.Exception.Message } }
+    })
+    $lang.Add_SelectedIndexChanged({ & $fillList })
+    $openDir.Add_Click({ Start-Process explorer.exe -ArgumentList "`"$(Get-CPTemplateDir)`"" })
+    $edit.Add_Click({ $c = & $current; if ($c) { Start-Process notepad.exe -ArgumentList "`"$($c.Path)`"" } })
+    $close.Add_Click({ $f.Close() })
+    $useReset.Add_Click({
+        Invoke-CPSafe -What 'Saving the choice' {
+            $c = & $current; if (-not $c) { return }
+            if (-not $Config.DefaultTemplates) { $Config.DefaultTemplates = [ordered]@{} }
+            $Config.DefaultTemplates[$c.Language] = $c.Name
+            Save-CPConfig -Config $Config -Path $ConfigPath
+            $sel = $list.SelectedIndex; & $fillList; $list.SelectedIndex = $sel
+            $status.Text = "Reset after saving now uses: $($c.Name)"; $status.ForeColor = $script:CPGreen
+        }
+    })
+    $load.Add_Click({
+        Invoke-CPSafe -What 'Loading the template' {
+            $c = & $current; if (-not $c) { return }
+            $target = Get-CPPracticeFileFor -Config $Config -Extension $c.Ext
+            if (-not $target) { throw "No $($c.Language) practice file is set up. Add one in Settings > Practice files." }
+            $q = "Replace the contents of`n$target`nwith the template '$($c.Name)'?`n`nThe current file is backed up first."
+            if ([System.Windows.Forms.MessageBox]::Show($q, 'Load template', 'YesNo', 'Question') -ne 'Yes') { return }
+            $keep = 30; if ($Config.BackupsToKeep) { $keep = [int]$Config.BackupsToKeep }
+            Backup-CPPracticeFile -Path $target -Keep $keep | Out-Null
+            Reset-CPPracticeFile -MainCppPath $target -TemplatePath $c.Path
+            $Config.MainCppPath = $target
+            $t.Loaded = $true
+            $status.Text = "Loaded '$($c.Name)' into $([IO.Path]::GetFileName($target)) (old file backed up). If Visual Studio asks to reload, choose Yes."
+            $status.ForeColor = $script:CPGreen
+        }
+    })
+    $f.Add_KeyDown({ param($s, $e) if ($e.KeyCode -eq 'Escape') { $f.Close() } })
+    $f.Add_Shown({
+        Invoke-CPSafe -What 'Reading templates' {
+            $all = @(Get-CPTemplates)
+            $langs = @($all | ForEach-Object { $_.Language } | Select-Object -Unique)
+            foreach ($l in $langs) { [void]$lang.Items.Add($l) }
+            $want = if ($Language -and ($langs -contains $Language)) { $Language } elseif ($langs -contains 'C++') { 'C++' } else { $langs[0] }
+            $lang.SelectedItem = $want
+        }
+    })
+    [void]$f.ShowDialog()
+    $f.Dispose()
+    return $t.Loaded
 }

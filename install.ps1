@@ -11,10 +11,12 @@
 .EXAMPLE
     .\install.bat
     .\install.ps1 -MainCpp "C:\...\main.cpp" -RepoPath "C:\Users\me\Desktop\Problem-Solving-Solutions"
+    .\install.ps1 -PracticeFile "C:\...\main.cpp", "C:\...\main.py"      # one practice file per language"
 #>
 param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\CPSolutionSaver'),
     [string]$MainCpp,
+    [string[]]$PracticeFile,
     [string]$RepoPath,
     [switch]$NoDesktopShortcut,
     [switch]$NoPracticeLauncher,
@@ -107,7 +109,13 @@ Step 'Settings'
 Import-Module (Join-Path $InstallDir 'CPSaver.Core.psm1') -Force -DisableNameChecking
 $cfgPath = Get-CPDefaultConfigPath
 $cfg = Get-CPConfig $cfgPath
-if ($MainCpp)  { $cfg.MainCppPath = (Resolve-Path -LiteralPath $MainCpp).ProviderPath }
+# practice files: one per language; a new file replaces the old one of the same language
+$add = @(@($PracticeFile) + @($MainCpp) | Where-Object { $_ } | ForEach-Object { (Resolve-Path -LiteralPath $_).ProviderPath })
+foreach ($p in $add) {
+    $lang = (Get-CPLanguage $p).Name
+    $cfg.PracticeFiles = @(@($cfg.PracticeFiles) | Where-Object { $_ -and ((Get-CPLanguage $_).Name -ne $lang) }) + @($p)
+}
+if ($add.Count) { $cfg.MainCppPath = $add[-1] }
 if ($RepoPath) { $cfg.RepoPath = (Resolve-Path -LiteralPath $RepoPath).ProviderPath }
 
 # migrate from the v1 script's config if present next to the practice project
@@ -115,10 +123,10 @@ if (-not $cfg.RepoPath -and $cfg.MainCppPath) {
     $old = Join-Path (Split-Path (Split-Path $cfg.MainCppPath -Parent) -Parent) 'save_solution.config.json'
     if (Test-Path $old) { try { $cfg.RepoPath = (Get-Content $old -Raw | ConvertFrom-Json).RepoPath; Ok "Imported repo path from $old" } catch { } }
 }
-Initialize-CPTemplate $cfg.TemplatePath
+$tplDir = Initialize-CPTemplates
 Save-CPConfig -Config $cfg -Path $cfgPath
 Ok "Settings file: $cfgPath"
-Ok "Template file: $($cfg.TemplatePath)"
+Ok "Templates    : $tplDir ($(@(Get-CPTemplates).Count) templates)"
 
 $problems = @(Test-CPConfig $cfg)
 if ($problems.Count -and -not $Quiet) {
@@ -128,7 +136,7 @@ if ($problems.Count -and -not $Quiet) {
     $problems = @(Test-CPConfig $cfg)
 }
 if ($problems.Count) { $problems | ForEach-Object { Warn $_ }; Warn 'Open "CP Solution Saver - Settings" from the Start Menu to fix this.' }
-else { Ok "Practice file : $($cfg.MainCppPath)"; Ok "Solutions repo: $($cfg.RepoPath)" }
+else { foreach ($p in @($cfg.PracticeFiles)) { Ok "Practice file : $p" }; Ok "Solutions repo: $($cfg.RepoPath)" }
 
 # 5. launcher next to the practice project ------------------------------------
 if (-not $NoPracticeLauncher -and $cfg.MainCppPath -and (Test-Path -LiteralPath $cfg.MainCppPath)) {

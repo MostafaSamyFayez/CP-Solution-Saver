@@ -5,3 +5,6 @@
 *.vbs text eol=crlf
 *.cpp text eol=crlf
 *.md text
+*.ico binary
+*.png binary
+*.cs text eol=crlf

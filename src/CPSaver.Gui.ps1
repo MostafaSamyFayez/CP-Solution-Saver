@@ -4,16 +4,37 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName Microsoft.VisualBasic
+
+$script:CPGuiDir  = $PSScriptRoot
+$script:CPCorePath = Join-Path $PSScriptRoot 'CPSaver.Core.psm1'
+
+# Native helpers (hotkeys, sharp text on scaled screens), compiled by the installer.
+$script:CPNative = $false
+$nativeDll = Join-Path $PSScriptRoot 'CPSaver.Native.dll'
+if (Test-Path -LiteralPath $nativeDll) {
+    try { Add-Type -Path $nativeDll -ErrorAction Stop; $script:CPNative = $true }
+    catch { if ('CPSaverNative.HostWindow' -as [type]) { $script:CPNative = $true } }
+}
+if ($script:CPNative -and -not $script:CPDpiDone) { [CPSaverNative.Dpi]::Enable(); $script:CPDpiDone = $true }
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+# ---------------------------------------------------------------- theme
 $script:CPFont      = New-Object System.Drawing.Font('Segoe UI', 9.75)
 $script:CPFontBold  = New-Object System.Drawing.Font('Segoe UI', 9.75, [System.Drawing.FontStyle]::Bold)
 $script:CPFontTitle = New-Object System.Drawing.Font('Segoe UI Semibold', 13)
-$script:CPFontMono  = New-Object System.Drawing.Font('Consolas', 9)
-$script:CPGreen     = [System.Drawing.Color]::FromArgb(0, 128, 0)
-$script:CPOrange    = [System.Drawing.Color]::FromArgb(200, 110, 0)
-$script:CPRed       = [System.Drawing.Color]::FromArgb(190, 30, 30)
+$script:CPFontHead  = New-Object System.Drawing.Font('Segoe UI Semibold', 12.5)
+$script:CPFontSmall = New-Object System.Drawing.Font('Segoe UI', 9)
+$script:CPFontMono  = New-Object System.Drawing.Font('Consolas', 9.5)
+$script:CPGreen     = [System.Drawing.Color]::FromArgb(26, 127, 55)
+$script:CPOrange    = [System.Drawing.Color]::FromArgb(188, 76, 0)
+$script:CPRed       = [System.Drawing.Color]::FromArgb(207, 34, 46)
+$script:CPBlue      = [System.Drawing.Color]::FromArgb(9, 105, 218)
 $script:CPAccent    = [System.Drawing.Color]::FromArgb(36, 41, 47)
+$script:CPBg        = [System.Drawing.Color]::FromArgb(246, 248, 250)
+$script:CPBorder    = [System.Drawing.Color]::FromArgb(208, 215, 222)
+$script:CPMuted     = [System.Drawing.Color]::FromArgb(87, 96, 106)
+$script:CPPrimary   = [System.Drawing.Color]::FromArgb(31, 136, 61)
+$script:CPPrimaryHi = [System.Drawing.Color]::FromArgb(26, 115, 52)
 
 $script:CPCommonTopics = @(
     'implementation', 'math', 'greedy', 'dp', 'data structures', 'brute force', 'constructive algorithms',
@@ -34,7 +55,19 @@ function Invoke-CPSafe {
 }
 
 function Get-CPAppIcon {
-    try { return [System.Drawing.Icon]::ExtractAssociatedIcon((Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')) } catch { return $null }
+    if ($script:CPIconCache) { return $script:CPIconCache }
+    $ico = Join-Path $script:CPGuiDir 'app.ico'
+    try {
+        if (Test-Path -LiteralPath $ico) { $script:CPIconCache = New-Object System.Drawing.Icon($ico) }
+        else { $script:CPIconCache = [System.Drawing.Icon]::ExtractAssociatedIcon((Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')) }
+    } catch { $script:CPIconCache = $null }
+    return $script:CPIconCache
+}
+
+function Get-CPAppImage([int]$Size = 32) {
+    $ico = Get-CPAppIcon
+    if (-not $ico) { return $null }
+    try { return (New-Object System.Drawing.Icon($ico, $Size, $Size)).ToBitmap() } catch { return $ico.ToBitmap() }
 }
 
 function New-CPLabel([string]$Text, $Font = $script:CPFont) {
@@ -46,12 +79,210 @@ function New-CPLabel([string]$Text, $Font = $script:CPFont) {
 }
 
 function New-CPButton([string]$Text, [int]$Width = 0) {
+    # flat, light button with a hover colour
     $b = New-Object System.Windows.Forms.Button
     $b.Text = $Text; $b.Font = $script:CPFont; $b.AutoSize = $true
     $b.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
-    $b.Padding = New-Object System.Windows.Forms.Padding(8, 3, 8, 3)
+    $b.Padding = New-Object System.Windows.Forms.Padding(10, 4, 10, 4)
+    $b.Margin = New-Object System.Windows.Forms.Padding(3, 4, 6, 4)
+    $b.FlatStyle = 'Flat'; $b.BackColor = [System.Drawing.Color]::White; $b.ForeColor = $script:CPAccent
+    $b.FlatAppearance.BorderColor = $script:CPBorder
+    $b.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(243, 244, 246)
+    $b.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(234, 238, 242)
+    $b.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $b.UseVisualStyleBackColor = $false
     if ($Width) { $b.MinimumSize = New-Object System.Drawing.Size($Width, 0) }
     return $b
+}
+
+function Set-CPPrimary($Button) {
+    $Button.BackColor = $script:CPPrimary; $Button.ForeColor = [System.Drawing.Color]::White
+    $Button.FlatAppearance.BorderColor = $script:CPPrimaryHi
+    $Button.FlatAppearance.MouseOverBackColor = $script:CPPrimaryHi
+    $Button.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::FromArgb(20, 95, 43)
+    $Button.Font = $script:CPFontBold
+}
+
+function New-CPForm([string]$Title, [int]$Width, [int]$Height, [int]$MinWidth = 0, [int]$MinHeight = 0) {
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text = $Title; $f.Font = $script:CPFont; $f.StartPosition = 'CenterScreen'
+    $f.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96)
+    $f.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
+    $f.Size = New-Object System.Drawing.Size($Width, $Height)
+    if ($MinWidth) { $f.MinimumSize = New-Object System.Drawing.Size($MinWidth, $MinHeight) }
+    $f.BackColor = $script:CPBg; $f.KeyPreview = $true
+    $ico = Get-CPAppIcon; if ($ico) { $f.Icon = $ico }
+    return $f
+}
+
+function New-CPHeader {
+    <# Dark header strip: icon, title, subtitle, and a right-hand label (returned as .Right). #>
+    param([string]$Title, [string]$Subtitle = '')
+    $p = New-Object System.Windows.Forms.Panel
+    $p.Dock = 'Top'; $p.Height = 58; $p.BackColor = $script:CPAccent; $p.Padding = New-Object System.Windows.Forms.Padding(14, 8, 14, 8)
+    $pic = New-Object System.Windows.Forms.PictureBox
+    $pic.Size = New-Object System.Drawing.Size(40, 40); $pic.Location = New-Object System.Drawing.Point(14, 9)
+    $pic.SizeMode = 'Zoom'; $pic.Image = Get-CPAppImage 48
+    $t = New-Object System.Windows.Forms.Label
+    $t.Text = $Title; $t.Font = $script:CPFontHead; $t.ForeColor = [System.Drawing.Color]::White; $t.AutoSize = $true
+    $t.Location = New-Object System.Drawing.Point(62, 7)
+    $s = New-Object System.Windows.Forms.Label
+    $s.Text = $Subtitle; $s.Font = $script:CPFontSmall; $s.ForeColor = [System.Drawing.Color]::FromArgb(201, 209, 217); $s.AutoSize = $true
+    $s.Location = New-Object System.Drawing.Point(64, 32)
+    $r = New-Object System.Windows.Forms.Label
+    $r.Text = ''; $r.Font = $script:CPFontSmall; $r.ForeColor = [System.Drawing.Color]::FromArgb(201, 209, 217)
+    $r.AutoSize = $false; $r.Dock = 'Right'; $r.Width = 330; $r.TextAlign = 'MiddleRight'
+    $p.Controls.Add($r); $p.Controls.Add($pic); $p.Controls.Add($t); $p.Controls.Add($s)
+    return @{ Panel = $p; Right = $r; Subtitle = $s }
+}
+
+function Format-CPStats([string]$RepoPath) {
+    try {
+        $s = Get-CPStats $RepoPath
+        $txt = "$($s.Problems) problem$(if ($s.Problems -ne 1) { 's' }) solved"
+        if ($s.ThisWeek) { $txt += "   |   $($s.ThisWeek) this week" }
+        return $txt
+    } catch { return '' }
+}
+
+function Show-CPForeground($Form) {
+    # bring a window in front of other apps (e.g. Visual Studio) when opened from a hotkey
+    try {
+        $Form.TopMost = $true; $Form.Activate(); $Form.TopMost = $false
+        if ($script:CPNative) { [CPSaverNative.HostWindow]::BringToFront($Form.Handle) }
+    } catch { }
+}
+
+# ---------------------------------------------------------------- background work
+# Online lookups and git run in a runspace pool so windows never freeze.
+# Start-CPJob queues work; Update-CPJobs (called by a timer of the open window or
+# the tray) runs the -OnDone scriptblock on the UI thread when it finishes.
+$script:CPJobs = New-Object System.Collections.ArrayList
+$script:CPPool = $null
+
+function Open-CPPool {
+    <# Starts opening the pool in the background (call early). #>
+    if ($script:CPPool) { return }
+    try {
+        $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+        $iss.ImportPSModule(@($script:CPCorePath))
+        try { $iss.ExecutionPolicy = 'Bypass' } catch { }
+        $script:CPPool = [runspacefactory]::CreateRunspacePool(1, 2, $iss, $Host)
+        $script:CPPoolOpen = $script:CPPool.BeginOpen($null, $null)
+    } catch { $script:CPPool = $null }
+}
+
+function Get-CPPool {
+    if (-not $script:CPPool) { Open-CPPool }
+    if (-not $script:CPPool) { return $null }
+    try {
+        if ($script:CPPoolOpen) { $script:CPPool.EndOpen($script:CPPoolOpen); $script:CPPoolOpen = $null }
+        if ($script:CPPool.RunspacePoolStateInfo.State -ne 'Opened') { return $null }
+        return $script:CPPool
+    } catch { $script:CPPool = $null; return $null }
+}
+
+function Start-CPJob {
+    <# Runs -Script with -Arguments in the background; calls -OnDone with (result, error message). Falls back to running it now. #>
+    param([Parameter(Mandatory)][scriptblock]$Script, [object[]]$Arguments = @(), [Parameter(Mandatory)][scriptblock]$OnDone, $Owner)
+    $pool = Get-CPPool
+    if (-not $pool) {
+        $r = $null; $e = $null
+        try { $r = & $Script @Arguments } catch { $e = $_.Exception.Message }
+        & $OnDone $r $e
+        return
+    }
+    $ps = [powershell]::Create()
+    $ps.RunspacePool = $pool
+    [void]$ps.AddScript($Script.ToString())
+    foreach ($a in $Arguments) { [void]$ps.AddArgument($a) }
+    $h = $ps.BeginInvoke()
+    [void]$script:CPJobs.Add(@{ PS = $ps; H = $h; OnDone = $OnDone; Owner = $Owner })
+}
+
+function Update-CPJobs {
+    foreach ($j in @($script:CPJobs)) {
+        if (-not $j.H.IsCompleted) { continue }
+        $script:CPJobs.Remove($j)
+        $r = $null; $e = $null
+        try { $out = $j.PS.EndInvoke($j.H); if ($out.Count -gt 0) { $r = $out[$out.Count - 1] } }
+        catch { $e = $_.Exception.InnerException.Message; if (-not $e) { $e = $_.Exception.Message } }
+        if ($null -eq $r -and -not $e -and $j.PS.Streams.Error.Count) { $e = [string]$j.PS.Streams.Error[0] }
+        $j.PS.Dispose()
+        if ($r -is [psobject] -and $r.BaseObject -is [System.Collections.IDictionary]) { $r = $r.BaseObject }
+        if ($j.Owner -and $j.Owner.IsDisposed) { continue }   # its window was closed meanwhile
+        try { & $j.OnDone $r $e } catch { }
+    }
+}
+
+function Test-CPJobsRunning { return ($script:CPJobs.Count -gt 0) }
+
+# ---------------------------------------------------------------- busy popup + result window
+function Show-CPBusy {
+    <# Small "working..." window in the middle of the screen; returns it (call .Close()). #>
+    param([string]$Text)
+    $f = New-Object System.Windows.Forms.Form
+    $f.FormBorderStyle = 'None'; $f.StartPosition = 'CenterScreen'; $f.TopMost = $true; $f.ShowInTaskbar = $false
+    $f.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96); $f.AutoScaleMode = 'Dpi'
+    $f.Size = New-Object System.Drawing.Size(380, 96); $f.BackColor = $script:CPAccent; $f.Padding = New-Object System.Windows.Forms.Padding(2)
+    $inner = New-Object System.Windows.Forms.Panel; $inner.Dock = 'Fill'; $inner.BackColor = [System.Drawing.Color]::White
+    $pic = New-Object System.Windows.Forms.PictureBox; $pic.Image = Get-CPAppImage 32; $pic.SizeMode = 'Zoom'
+    $pic.Size = New-Object System.Drawing.Size(32, 32); $pic.Location = New-Object System.Drawing.Point(16, 18)
+    $l = New-Object System.Windows.Forms.Label; $l.Text = $Text; $l.Font = $script:CPFontBold; $l.AutoSize = $false
+    $l.Location = New-Object System.Drawing.Point(60, 14); $l.Size = New-Object System.Drawing.Size(300, 24); $l.AutoEllipsis = $true
+    $bar = New-Object System.Windows.Forms.ProgressBar; $bar.Style = 'Marquee'; $bar.MarqueeAnimationSpeed = 25
+    $bar.Location = New-Object System.Drawing.Point(62, 46); $bar.Size = New-Object System.Drawing.Size(290, 12)
+    $inner.Controls.Add($pic); $inner.Controls.Add($l); $inner.Controls.Add($bar)
+    $f.Controls.Add($inner)
+    $f.Show(); [System.Windows.Forms.Application]::DoEvents()
+    return $f
+}
+
+function Show-CPResultDialog {
+    <#
+      A clean result window (used by quick save). -Kind Success | Info | Error.
+      Returns 'ok', 'open' (open the full window) or 'web'.
+    #>
+    param([string]$Title, [string[]]$Lines, [string]$Kind = 'Success', [string]$Url, [switch]$OfferOpen)
+    $f = New-CPForm 'CP Solution Saver' 520 250
+    $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.MinimizeBox = $false; $f.TopMost = $true
+    $f.BackColor = [System.Drawing.Color]::White
+    $color = switch ($Kind) { 'Error' { $script:CPRed } 'Info' { $script:CPBlue } default { $script:CPPrimary } }
+    $strip = New-Object System.Windows.Forms.Panel; $strip.Dock = 'Left'; $strip.Width = 6; $strip.BackColor = $color
+    $grid = New-Object System.Windows.Forms.TableLayoutPanel; $grid.Dock = 'Fill'; $grid.ColumnCount = 2; $grid.RowCount = 3
+    $grid.Padding = New-Object System.Windows.Forms.Padding(16, 14, 16, 10)
+    [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    $mark = New-Object System.Windows.Forms.Label
+    $mark.Text = $(switch ($Kind) { 'Error' { '!' } 'Info' { 'i' } default { [string][char]0x2713 } })
+    $mark.Font = New-Object System.Drawing.Font('Segoe UI', 18, [System.Drawing.FontStyle]::Bold); $mark.ForeColor = [System.Drawing.Color]::White
+    $mark.BackColor = $color; $mark.AutoSize = $false; $mark.Size = New-Object System.Drawing.Size(42, 42); $mark.TextAlign = 'MiddleCenter'
+    $mark.Margin = New-Object System.Windows.Forms.Padding(0, 2, 14, 0)
+    $t = New-Object System.Windows.Forms.Label; $t.Text = $Title; $t.Font = $script:CPFontTitle; $t.ForeColor = $script:CPAccent
+    $t.AutoSize = $true; $t.MaximumSize = New-Object System.Drawing.Size(420, 0); $t.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 6)
+    $body = New-Object System.Windows.Forms.Label; $body.Text = (($Lines | Where-Object { $_ }) -join "`r`n")
+    $body.Font = $script:CPFont; $body.ForeColor = $script:CPMuted; $body.AutoSize = $true; $body.MaximumSize = New-Object System.Drawing.Size(420, 0)
+    $grid.Controls.Add($mark, 0, 0); $grid.SetRowSpan($mark, 2)
+    $grid.Controls.Add($t, 1, 0); $grid.Controls.Add($body, 1, 1)
+    $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.FlowDirection = 'RightToLeft'; $btns.AutoSize = $true; $btns.Dock = 'Fill'
+    $ok = New-CPButton 'OK' 90; Set-CPPrimary $ok
+    $btns.Controls.Add($ok)
+    $result = @{ Value = 'ok' }
+    if ($Url) { $web = New-CPButton 'Open on GitHub'; $btns.Controls.Add($web); $web.Add_Click({ $result.Value = 'web'; $f.Close() }) }
+    if ($OfferOpen) { $op = New-CPButton 'Open CP Solution Saver'; $btns.Controls.Add($op); $op.Add_Click({ $result.Value = 'open'; $f.Close() }) }
+    $ok.Add_Click({ $result.Value = 'ok'; $f.Close() })
+    $grid.Controls.Add($btns, 0, 2); $grid.SetColumnSpan($btns, 2)
+    $f.Controls.Add($grid); $f.Controls.Add($strip)
+    $f.AcceptButton = $ok; $f.CancelButton = $ok
+    $f.AutoSize = $true; $f.AutoSizeMode = 'GrowOnly'
+    $f.Add_Shown({ Show-CPForeground $f; $ok.Focus() })
+    [void]$f.ShowDialog()
+    $f.Dispose()
+    if ($result.Value -eq 'web' -and $Url) { try { Start-Process $Url } catch { } }
+    return $result.Value
 }
 
 function New-CPTextBox([switch]$Multiline) {
@@ -84,10 +315,8 @@ function Show-CPTopicPicker {
     $items = @(Merge-CPTopics @(,$known.ToArray()) | Sort-Object)
     $selLower = @($Selected | Where-Object { $_ } | ForEach-Object { $_.ToLowerInvariant() })
 
-    $f = New-Object System.Windows.Forms.Form
-    $f.Text = 'Pick topics'; $f.Font = $script:CPFont; $f.StartPosition = 'CenterParent'
-    $f.Size = New-Object System.Drawing.Size(380, 520); $f.MinimizeBox = $false; $f.MaximizeBox = $false
-    $f.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
+    $f = New-CPForm 'Pick topics' 400 560
+    $f.StartPosition = 'CenterParent'; $f.MinimizeBox = $false; $f.MaximizeBox = $false
     $layout = New-Object System.Windows.Forms.TableLayoutPanel
     $layout.Dock = 'Fill'; $layout.ColumnCount = 1; $layout.RowCount = 4; $layout.Padding = New-Object System.Windows.Forms.Padding(8)
     [void]$layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
@@ -108,7 +337,7 @@ function Show-CPTopicPicker {
     $layout.Controls.Add($addRow, 0, 2)
     $btns = New-Object System.Windows.Forms.FlowLayoutPanel
     $btns.FlowDirection = 'RightToLeft'; $btns.AutoSize = $true; $btns.Dock = 'Fill'
-    $ok = New-CPButton 'OK' 80; $ok.DialogResult = 'OK'
+    $ok = New-CPButton 'OK' 80; $ok.DialogResult = 'OK'; Set-CPPrimary $ok
     $cancel = New-CPButton 'Cancel' 80; $cancel.DialogResult = 'Cancel'
     $btns.Controls.Add($cancel); $btns.Controls.Add($ok)
     $layout.Controls.Add($btns, 0, 3)
@@ -120,25 +349,35 @@ function Show-CPTopicPicker {
 # ============================================================================
 #  Settings dialog
 # ============================================================================
+function Get-CPLauncherPath { Join-Path $script:CPGuiDir 'CPSaverLauncher.exe' }
+function Get-CPStartupShortcut { Join-Path ([Environment]::GetFolderPath('Startup')) 'CP Solution Saver.lnk' }
+function Test-CPStartWithWindows { return (Test-Path -LiteralPath (Get-CPStartupShortcut)) }
+function Set-CPStartWithWindows([bool]$Enabled) {
+    $lnk = Get-CPStartupShortcut
+    if (-not $Enabled) { if (Test-Path -LiteralPath $lnk) { Remove-Item -LiteralPath $lnk -Force }; return }
+    $exe = Get-CPLauncherPath
+    if (-not (Test-Path -LiteralPath $exe)) { return }
+    $sh = New-Object -ComObject WScript.Shell
+    $s = $sh.CreateShortcut($lnk)
+    $s.TargetPath = $exe; $s.Arguments = 'tray'; $s.WorkingDirectory = $script:CPGuiDir
+    $s.IconLocation = (Join-Path $script:CPGuiDir 'app.ico'); $s.Description = 'CP Solution Saver (tray)'
+    $s.Save()
+}
+
 function Show-CPSettingsDialog {
     <# Returns $true if saved. Edits $Config in place. #>
     param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$ConfigPath, [string]$Intro)
 
-    $f = New-Object System.Windows.Forms.Form
-    $f.Text = 'CP Solution Saver - Settings'; $f.Font = $script:CPFont; $f.StartPosition = 'CenterScreen'
-    $f.Size = New-Object System.Drawing.Size(800, 640); $f.MinimumSize = New-Object System.Drawing.Size(680, 560)
-    $f.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
-    $ico = Get-CPAppIcon; if ($ico) { $f.Icon = $ico }
+    $f = New-CPForm 'CP Solution Saver - Settings' 820 760 700 640
+    $hdr = New-CPHeader 'Settings' "CP Solution Saver $(Get-CPAppVersion)"
 
     $grid = New-Object System.Windows.Forms.TableLayoutPanel
-    $grid.Dock = 'Fill'; $grid.ColumnCount = 3; $grid.Padding = New-Object System.Windows.Forms.Padding(12)
+    $grid.Dock = 'Fill'; $grid.ColumnCount = 3; $grid.Padding = New-Object System.Windows.Forms.Padding(14, 10, 14, 10); $grid.AutoScroll = $true
     [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
     [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
     $row = 0
 
-    $title = New-CPLabel 'Settings' $script:CPFontTitle
-    $grid.Controls.Add($title, 0, $row); $grid.SetColumnSpan($title, 3); $row++
     if ($Intro) {
         $il = New-CPLabel $Intro; $il.MaximumSize = New-Object System.Drawing.Size(700, 0); $il.ForeColor = $script:CPOrange
         $grid.Controls.Add($il, 0, $row); $grid.SetColumnSpan($il, 3); $row++
@@ -250,7 +489,10 @@ function Show-CPSettingsDialog {
     $cPush  = & $mk 'Push to GitHub after saving' $Config.PushAfterSave
     $cReset = & $mk 'Reset the practice file to its template after a successful save (recommended)' $Config.ResetAfterSave
     $cIdx   = & $mk 'Update README progress and topic / difficulty indexes' $Config.UpdateIndexes
-    $cDlg   = & $mk 'Quick save (Ctrl+Alt+Shift+F): show a Windows notification instead of a message box' ($Config.QuickSaveNotify -eq 'notification')
+    $cClose = & $mk 'Close the save window after a successful save' $Config.CloseAfterSave
+    $cDlg   = & $mk 'Quick save (Ctrl+Alt+Shift+F): show a Windows notification instead of the result window' ($Config.QuickSaveNotify -eq 'notification')
+    $cStart = & $mk 'Start with Windows (keeps the shortcuts instant; runs quietly in the tray)' (Test-CPStartWithWindows)
+    if (-not (Test-Path -LiteralPath (Get-CPLauncherPath))) { $cStart.Enabled = $false }
     $grid.Controls.Add($opts, 0, $row); $grid.SetColumnSpan($opts, 3); $row++
 
     $upg = New-CPButton 'Add Difficulty/Topics fields to my practice files'' headers'
@@ -267,7 +509,7 @@ function Show-CPSettingsDialog {
     # bottom buttons
     $btns = New-Object System.Windows.Forms.FlowLayoutPanel
     $btns.FlowDirection = 'RightToLeft'; $btns.AutoSize = $true; $btns.Dock = 'Fill'; $btns.Margin = New-Object System.Windows.Forms.Padding(3, 14, 3, 3)
-    $ok = New-CPButton 'Save' 90
+    $ok = New-CPButton 'Save' 100; Set-CPPrimary $ok
     $cancel = New-CPButton 'Cancel' 90; $cancel.DialogResult = 'Cancel'
     $btns.Controls.Add($cancel); $btns.Controls.Add($ok)
     $grid.Controls.Add($btns, 0, $row); $grid.SetColumnSpan($btns, 3); $row++
@@ -281,6 +523,8 @@ function Show-CPSettingsDialog {
         $Config.AutoFetch = $cFetch.Checked; $Config.PushAfterSave = $cPush.Checked
         $Config.ResetAfterSave = $cReset.Checked; $Config.UpdateIndexes = $cIdx.Checked
         $Config.QuickSaveNotify = $(if ($cDlg.Checked) { 'notification' } else { 'dialog' })
+        $Config.CloseAfterSave = $cClose.Checked
+        if ($cStart.Enabled) { try { Set-CPStartWithWindows $cStart.Checked } catch { } }
         $problems = @(Test-CPConfig $Config)
         if ($problems.Count) {
             $a = [System.Windows.Forms.MessageBox]::Show(($problems -join "`n") + "`n`nSave anyway?", 'Settings', 'YesNo', 'Warning')
@@ -291,7 +535,8 @@ function Show-CPSettingsDialog {
         $f.Close()
     })
 
-    $f.Controls.Add($grid); $f.CancelButton = $cancel
+    $f.Controls.Add($grid); $f.Controls.Add($hdr.Panel); $f.CancelButton = $cancel
+    $f.Add_Shown({ Show-CPForeground $f })
     return ($f.ShowDialog() -eq 'OK')
 }
 
@@ -307,23 +552,19 @@ function Show-CPMainWindow {
     }
 
     $ui = @{}
-    $st = @{ Info = $null; LoadedMtime = [datetime]::MinValue; Existing = $null; Busy = $false; FillingFiles = $false }
+    $st = @{ Info = $null; LoadedMtime = [datetime]::MinValue; Existing = $null; Busy = $false; FillingFiles = $false; Fetching = $false; Queue = $null; CloseAt = $null }
 
-    $f = New-Object System.Windows.Forms.Form
-    $f.Text = "CP Solution Saver $(Get-CPAppVersion)"; $f.Font = $script:CPFont; $f.StartPosition = 'CenterScreen'
-    $f.Size = New-Object System.Drawing.Size(860, 760); $f.MinimumSize = New-Object System.Drawing.Size(700, 620)
-    $f.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi; $f.KeyPreview = $true
-    $ico = Get-CPAppIcon; if ($ico) { $f.Icon = $ico }
+    $f = New-CPForm "CP Solution Saver $(Get-CPAppVersion)" 880 800 720 660
+    $script:CPActiveForm = $f
+    $hdr = New-CPHeader 'Save an accepted solution' 'Ctrl+S save & push   |   F5 reload   |   Esc close'
+    $ui.Stats = $hdr.Right
 
     $grid = New-Object System.Windows.Forms.TableLayoutPanel
-    $grid.Dock = 'Fill'; $grid.ColumnCount = 3; $grid.Padding = New-Object System.Windows.Forms.Padding(12, 8, 12, 8)
+    $grid.Dock = 'Fill'; $grid.ColumnCount = 3; $grid.Padding = New-Object System.Windows.Forms.Padding(14, 10, 14, 10)
     [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
     [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     [void]$grid.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
     $row = 0
-
-    $title = New-CPLabel 'Save an accepted solution' $script:CPFontTitle; $title.ForeColor = $script:CPAccent
-    $grid.Controls.Add($title, 0, $row); $grid.SetColumnSpan($title, 3); $row++
 
     # practice file (most recently saved one is picked) + status line
     $grid.Controls.Add((New-CPLabel 'Practice file:'), 0, $row)
@@ -332,7 +573,7 @@ function Show-CPMainWindow {
     $grid.Controls.Add($ui.File, 1, $row)
     $ui.Reload = New-CPButton 'Reload (F5)'
     $grid.Controls.Add($ui.Reload, 2, $row); $row++
-    $ui.Source = New-CPLabel ''; $ui.Source.ForeColor = [System.Drawing.Color]::DimGray
+    $ui.Source = New-CPLabel ''; $ui.Source.ForeColor = $script:CPMuted; $ui.Source.Font = $script:CPFontSmall
     $ui.Source.MaximumSize = New-Object System.Drawing.Size(700, 0); $ui.Source.Margin = New-Object System.Windows.Forms.Padding(3, 0, 3, 4)
     $grid.Controls.Add($ui.Source, 1, $row); $grid.SetColumnSpan($ui.Source, 2); $row++
 
@@ -387,13 +628,13 @@ function Show-CPMainWindow {
     $ui.OptPush  = & $mk 'Push to GitHub' $Config.PushAfterSave
     $ui.OptIdx   = & $mk 'Update README && indexes' $Config.UpdateIndexes
     $ui.OptReset = & $mk 'Reset to template after saving' $Config.ResetAfterSave
+    $ui.OptClose = & $mk 'Close this window after saving' $Config.CloseAfterSave
     $grid.Controls.Add($opts, 0, $row); $grid.SetColumnSpan($opts, 3); $row++
 
     # buttons
     $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.AutoSize = $true; $btns.Dock = 'Fill'; $btns.WrapContents = $true
-    $ui.Save = New-CPButton 'Save && Push   (Ctrl+S)' 190
-    $ui.Save.Font = $script:CPFontBold; $ui.Save.BackColor = [System.Drawing.Color]::FromArgb(31, 136, 61); $ui.Save.ForeColor = [System.Drawing.Color]::White
-    $ui.Save.FlatStyle = 'Flat'; $ui.Save.Padding = New-Object System.Windows.Forms.Padding(12, 6, 12, 6)
+    $ui.Save = New-CPButton 'Save && Push   (Ctrl+S)' 200
+    Set-CPPrimary $ui.Save; $ui.Save.Padding = New-Object System.Windows.Forms.Padding(14, 7, 14, 7)
     $ui.Rebuild = New-CPButton 'Rebuild index'
     $ui.OpenFolder = New-CPButton 'Open repo folder'
     $ui.OpenWeb = New-CPButton 'Open on GitHub'
@@ -408,12 +649,13 @@ function Show-CPMainWindow {
 
     $ui.Log = New-Object System.Windows.Forms.TextBox
     $ui.Log.Multiline = $true; $ui.Log.ReadOnly = $true; $ui.Log.ScrollBars = 'Vertical'; $ui.Log.Font = $script:CPFontMono
-    $ui.Log.Dock = 'Fill'; $ui.Log.BackColor = [System.Drawing.Color]::FromArgb(250, 250, 250)
+    $ui.Log.Dock = 'Fill'; $ui.Log.BackColor = [System.Drawing.Color]::White; $ui.Log.BorderStyle = 'FixedSingle'
     $grid.Controls.Add($ui.Log, 0, $row); $grid.SetColumnSpan($ui.Log, 3)
     $grid.RowCount = $row + 1
     for ($i = 0; $i -lt $row; $i++) { [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize))) }
     [void]$grid.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     $f.Controls.Add($grid)
+    $f.Controls.Add($hdr.Panel)
 
     # ------------------------------------------------------------ behaviour
     $log = { param($m) $ui.Log.AppendText("$m`r`n"); [System.Windows.Forms.Application]::DoEvents() }
@@ -459,9 +701,16 @@ function Show-CPMainWindow {
     $doFetch = {
         $link = $ui.Link.Text.Trim()
         if (-not $link) { & $log 'Enter the problem link first.'; return }
-        $f.Cursor = 'WaitCursor'; & $setStatus 'Looking the problem up online...' ([System.Drawing.Color]::DimGray)
-        try { & $applyMetadata (Get-CPProblemMetadata $link) } finally { $f.Cursor = 'Default'; & $setStatus 'Ready.' ([System.Drawing.Color]::Black) }
-        & $refreshTarget
+        if ($st.Fetching) { return }
+        $st.Fetching = $true; $ui.Fetch.Enabled = $false; $ui.Fetch.Text = 'Looking up...'
+        & $setStatus 'Looking the problem up online...' $script:CPMuted
+        Start-CPJob -Owner $f -Script { param($l) Get-CPProblemMetadata $l } -Arguments @($link) -OnDone {
+            param($md, $err)
+            $st.Fetching = $false; $ui.Fetch.Enabled = $true; $ui.Fetch.Text = 'Look up online'
+            if ($err) { & $log "Online lookup failed: $err" } elseif ($md) { & $applyMetadata $md }
+            & $setStatus 'Ready.' $script:CPAccent
+            & $refreshTarget
+        }
     }
 
     $loadFile = {
@@ -498,39 +747,63 @@ function Show-CPMainWindow {
 
     $doSave = {
         if ($st.Busy) { return }
-        $st.Busy = $true; $ui.Save.Enabled = $false
-        try {
-            # use the latest code on disk, with the values from the form
-            $code = Read-CPTextFile $Config.MainCppPath
-            if ((Get-Item -LiteralPath $Config.MainCppPath).LastWriteTime -ne $st.LoadedMtime) { & $log 'Note: the file changed since it was loaded; saving the newest code from disk.' }
-            $info = New-CPSolutionInfo -Code $code -Extension ([IO.Path]::GetExtension($Config.MainCppPath))
-            $info.Name = $ui.Name.Text.Trim(); $info.Link = $ui.Link.Text.Trim(); $info.Platform = $ui.Platform.Text.Trim()
-            $info.Id = $ui.Id.Text.Trim(); $info.Difficulty = $ui.Difficulty.Text.Trim(); $info.Topics = & $topicsFromBox
-            $info.Notes = $ui.Notes.Text.Trim()
-            if (-not $info.Platform) { $info.Platform = (Get-CPPlatformInfo $info.Link).Platform }
-            if (-not $info.Link) { & $setStatus 'Enter the problem link first (required).' $script:CPRed; $ui.Link.Focus(); return }
-            if (-not $info.Name) { & $setStatus 'Enter the problem name first.' $script:CPRed; return }
-            $ui.Log.Clear()
-            & $setStatus 'Saving...' ([System.Drawing.Color]::DimGray)
-            $f.Cursor = 'WaitCursor'
-            $res = Save-CPSolution -Info $info -RepoPath $Config.RepoPath -Push:$ui.OptPush.Checked -UpdateIndexes:$ui.OptIdx.Checked -KeepBoth:$ui.KeepBoth.Checked -Log $log
-            $f.Cursor = 'Default'
+        # use the latest code on disk, with the values from the form
+        $code = Read-CPTextFile $Config.MainCppPath
+        if ((Get-Item -LiteralPath $Config.MainCppPath).LastWriteTime -ne $st.LoadedMtime) { & $log 'Note: the file changed since it was loaded; saving the newest code from disk.' }
+        $info = New-CPSolutionInfo -Code $code -Extension ([IO.Path]::GetExtension($Config.MainCppPath))
+        $info.Name = $ui.Name.Text.Trim(); $info.Link = $ui.Link.Text.Trim(); $info.Platform = $ui.Platform.Text.Trim()
+        $info.Id = $ui.Id.Text.Trim(); $info.Difficulty = $ui.Difficulty.Text.Trim(); $info.Topics = & $topicsFromBox
+        $info.Notes = $ui.Notes.Text.Trim()
+        if (-not $info.Platform) { $info.Platform = (Get-CPPlatformInfo $info.Link).Platform }
+        if (-not $info.Link) { & $setStatus 'Enter the problem link first (required).' $script:CPRed; $ui.Link.Focus(); return }
+        if (-not $info.Name) { & $setStatus 'Enter the problem name first.' $script:CPRed; return }
+        # remember the option choices
+        $Config.PushAfterSave = $ui.OptPush.Checked; $Config.UpdateIndexes = $ui.OptIdx.Checked
+        $Config.ResetAfterSave = $ui.OptReset.Checked; $Config.CloseAfterSave = $ui.OptClose.Checked
+        try { Save-CPConfig -Config $Config -Path $ConfigPath } catch { }
+
+        $st.Busy = $true; $ui.Save.Enabled = $false; $ui.Save.Text = 'Saving...'
+        $ui.Log.Clear()
+        & $setStatus $(if ($ui.OptPush.Checked) { 'Saving and pushing to GitHub...' } else { 'Saving...' }) $script:CPMuted
+        $st.Queue = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
+        Start-CPJob -Owner $f -Arguments @($info, $Config.RepoPath, $ui.OptPush.Checked, $ui.OptIdx.Checked, $ui.KeepBoth.Checked, $st.Queue) -Script {
+            param($info, $repo, $push, $idx, $keep, $q)
+            $sink = { param($m) $q.Enqueue($m) }.GetNewClosure()
+            Save-CPSolution -Info $info -RepoPath $repo -Push:$push -UpdateIndexes:$idx -KeepBoth:$keep -Log $sink
+        } -OnDone {
+            param($res, $err)
+            & $drainLog
+            $st.Busy = $false; $ui.Save.Enabled = $true; $ui.Save.Text = 'Save && Push   (Ctrl+S)'
+            if ($err -or -not $res) { & $log "ERROR: $err"; & $setStatus 'Something went wrong - see the details below.' $script:CPRed; return }
             if ($res.Success) {
-                $msg = if ($res.Pushed) { "Done! $($res.RelPath) is on GitHub." } elseif ($res.Commit) { "Saved and committed $($res.RelPath) (not pushed)." } else { 'Nothing new to save - this exact solution is already in the repo.' }
+                $file = [IO.Path]::GetFileName($Config.MainCppPath)
+                $msg = if ($res.Pushed) { "Done! $($res.RelPath) is on GitHub." } elseif ($res.Commit) { "Saved and committed $($res.RelPath) (not pushed)." } else { 'Already saved - this exact solution is in the repo, nothing new to push.' }
                 & $setStatus $msg $script:CPGreen
                 if ($ui.OptReset.Checked) {
                     Reset-CPPracticeFile -MainCppPath $Config.MainCppPath -Config $Config
-                    & $log "$([IO.Path]::GetFileName($Config.MainCppPath)) reset to its template. (If Visual Studio asks, choose 'Yes' to reload it.)"
+                    & $log "$file reset to its template. (If Visual Studio asks, choose 'Yes' to reload it.)"
                     & $loadFile $false
+                    & $setStatus $msg $script:CPGreen
                 } else { & $refreshTarget }
+                $ui.Stats.Text = Format-CPStats $Config.RepoPath
+                if ($ui.OptClose.Checked) { $st.CloseAt = (Get-Date).AddMilliseconds(1400); $ui.Status.Text = "$msg  Closing..." }
             } else {
                 & $setStatus 'Something went wrong - see the details below.' $script:CPRed
             }
-            # remember the option choices
-            $Config.PushAfterSave = $ui.OptPush.Checked; $Config.UpdateIndexes = $ui.OptIdx.Checked; $Config.ResetAfterSave = $ui.OptReset.Checked
-            Save-CPConfig -Config $Config -Path $ConfigPath
-        } finally { $st.Busy = $false; $ui.Save.Enabled = $true; $f.Cursor = 'Default' }
+        }
     }
+
+    $drainLog = {
+        if (-not $st.Queue) { return }
+        $m = $null
+        while ($st.Queue.TryDequeue([ref]$m)) { $ui.Log.AppendText("$m`r`n") }
+    }
+    $jobTimer = New-Object System.Windows.Forms.Timer; $jobTimer.Interval = 120
+    $jobTimer.Add_Tick({
+        & $drainLog
+        Update-CPJobs
+        if ($st.CloseAt -and (Get-Date) -ge $st.CloseAt) { $st.CloseAt = $null; $f.Close() }
+    })
 
     $fillFiles = {
         $st.FillingFiles = $true
@@ -552,6 +825,7 @@ function Show-CPMainWindow {
         }
     })
     $ui.Save.Add_Click({ Invoke-CPSafe -What 'Saving' $doSave })
+    $f.Add_FormClosing({ param($s, $e) if ($st.Busy) { $e.Cancel = $true; $ui.Status.Text = 'Please wait - still saving...' } })
     $ui.Fetch.Add_Click({ Invoke-CPSafe -What 'Online lookup' $doFetch })
     $ui.Reload.Add_Click({ Invoke-CPSafe -What 'Reload' { $ui.Log.Clear(); & $loadFile $true } })
     $ui.PickTopics.Add_Click({
@@ -561,21 +835,27 @@ function Show-CPMainWindow {
         }
     })
     $ui.Rebuild.Add_Click({
-        Invoke-CPSafe -What 'Rebuild index' {
-            $ui.Log.Clear(); $f.Cursor = 'WaitCursor'
-            $changed = Update-CPIndexes $Config.RepoPath
-            Invoke-CPGit $Config.RepoPath (@('add', '--') + $changed) | Out-Null
-            if ((Invoke-CPGit $Config.RepoPath diff --cached --quiet).Code -eq 0) { & $log 'Indexes are already up to date.' }
+        if ($st.Busy) { return }
+        $st.Busy = $true; $ui.Rebuild.Enabled = $false; $ui.Log.Clear()
+        & $setStatus 'Rebuilding the indexes...' $script:CPMuted
+        Start-CPJob -Owner $f -Arguments @($Config.RepoPath, $ui.OptPush.Checked) -Script {
+            param($repo, $push)
+            $out = New-Object System.Collections.Generic.List[string]
+            $changed = Update-CPIndexes $repo
+            Invoke-CPGit $repo (@('add', '--') + $changed) | Out-Null
+            if ((Invoke-CPGit $repo diff --cached --quiet).Code -eq 0) { $out.Add('Indexes are already up to date.') }
             else {
-                $r = Invoke-CPGit $Config.RepoPath commit -q -m 'Rebuild solution indexes'; & $log "Committed: Rebuild solution indexes $($r.Output)"
-                if ($ui.OptPush.Checked) { $r = Invoke-CPGit $Config.RepoPath push; & $log $(if ($r.Code -eq 0) { 'Pushed.' } else { "Push failed: $($r.Output)" }) }
+                $r = Invoke-CPGit $repo commit -q -m 'Rebuild solution indexes'; $out.Add('Committed: Rebuild solution indexes')
+                if ($push) { $r = Invoke-CPGit $repo push; $out.Add($(if ($r.Code -eq 0) { 'Pushed.' } else { "Push failed: $($r.Output)" })) }
             }
-            $f.Cursor = 'Default'; & $setStatus 'Index rebuilt.' $script:CPGreen
-        }
-    })
-    $ui.Browse.Add_Click({
-        Invoke-CPSafe -What 'Solved problems' {
-            Show-CPBrowser -Config $Config -OnLoaded { param($p) $ui.Log.Clear(); & $fillFiles; & $loadFile $false; & $log "Loaded $p into $([IO.Path]::GetFileName($Config.MainCppPath)) (old file backed up)." }
+            ,$out.ToArray()
+        } -OnDone {
+            param($lines, $err)
+            $st.Busy = $false; $ui.Rebuild.Enabled = $true
+            if ($err) { & $log "ERROR: $err"; & $setStatus 'Rebuild failed.' $script:CPRed; return }
+            foreach ($l in @($lines)) { & $log $l }
+            & $setStatus 'Index rebuilt.' $script:CPGreen
+            $ui.Stats.Text = Format-CPStats $Config.RepoPath
         }
     })
     $ui.OpenFolder.Add_Click({ Start-Process explorer.exe -ArgumentList "`"$($Config.RepoPath)`"" })
@@ -601,12 +881,15 @@ function Show-CPMainWindow {
         elseif ($e.KeyCode -eq 'Escape') { $f.Close() }
     })
     $f.Add_Shown({
-        $f.Activate()
+        Show-CPForeground $f
+        Open-CPPool
+        $jobTimer.Start()
         & $fillFiles
         Invoke-CPSafe -What 'Loading the practice file' { & $loadFile $true }
+        $ui.Stats.Text = Format-CPStats $Config.RepoPath
         $mtimeTimer.Start()
     })
-    $f.Add_FormClosed({ $timer.Stop(); $mtimeTimer.Stop() })
+    $f.Add_FormClosed({ $timer.Stop(); $mtimeTimer.Stop(); $jobTimer.Stop(); $script:CPActiveForm = $null })
 
     [void]$f.ShowDialog()
     $f.Dispose()
@@ -685,11 +968,8 @@ function Show-CPBrowser {
     #>
     param([Parameter(Mandatory)]$Config, [scriptblock]$OnLoaded)
 
-    $f = New-Object System.Windows.Forms.Form
-    $f.Text = 'CP Solution Saver - Solved problems'; $f.Font = $script:CPFont; $f.StartPosition = 'CenterScreen'
-    $f.Size = New-Object System.Drawing.Size(1100, 760); $f.MinimumSize = New-Object System.Drawing.Size(800, 520)
-    $f.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi; $f.KeyPreview = $true
-    $ico = Get-CPAppIcon; if ($ico) { $f.Icon = $ico }
+    $f = New-CPForm 'CP Solution Saver - Solved problems' 1140 800 820 560
+    $hdr = New-CPHeader 'Solved problems' 'Search, filter, preview, and load a solution back   |   Ctrl+F search   |   Enter load'
     $b = @{}
 
     $root = New-Object System.Windows.Forms.TableLayoutPanel
@@ -700,8 +980,6 @@ function Show-CPBrowser {
     [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
 
-    $title = New-CPLabel 'Solved problems' $script:CPFontTitle; $title.ForeColor = $script:CPAccent
-    $root.Controls.Add($title, 0, 0)
 
     # filter row
     $flt = New-Object System.Windows.Forms.TableLayoutPanel
@@ -730,6 +1008,10 @@ function Show-CPBrowser {
     $g.Dock = 'Fill'; $g.ReadOnly = $true; $g.AllowUserToAddRows = $false; $g.AllowUserToDeleteRows = $false
     $g.SelectionMode = 'FullRowSelect'; $g.MultiSelect = $false; $g.RowHeadersVisible = $false
     $g.AutoSizeColumnsMode = 'Fill'; $g.BackgroundColor = [System.Drawing.Color]::White; $g.BorderStyle = 'FixedSingle'
+    $g.EnableHeadersVisualStyles = $false; $g.ColumnHeadersDefaultCellStyle.BackColor = $script:CPBg; $g.ColumnHeadersDefaultCellStyle.ForeColor = $script:CPAccent
+    $g.ColumnHeadersBorderStyle = 'Single'; $g.GridColor = [System.Drawing.Color]::FromArgb(234, 238, 242); $g.CellBorderStyle = 'SingleHorizontal'
+    $g.DefaultCellStyle.SelectionBackColor = [System.Drawing.Color]::FromArgb(221, 244, 255); $g.DefaultCellStyle.SelectionForeColor = $script:CPAccent
+    $g.RowTemplate.Height = 28; $g.ColumnHeadersHeight = 32; $g.ColumnHeadersHeightSizeMode = 'DisableResizing'
     $g.Font = $script:CPFont; $g.AllowUserToResizeRows = $false
     $g.ColumnHeadersDefaultCellStyle.Font = $script:CPFontBold
     $g.AlternatingRowsDefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(246, 248, 250)
@@ -757,7 +1039,7 @@ function Show-CPBrowser {
     $b.Status.AutoSize = $false; $b.Status.Dock = 'Fill'; $b.Status.AutoEllipsis = $true; $b.Status.TextAlign = 'MiddleLeft'
     $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.AutoSize = $true; $btns.WrapContents = $false
     $b.Load = New-CPButton 'Load into practice file' 190
-    $b.Load.Font = $script:CPFontBold; $b.Load.BackColor = [System.Drawing.Color]::FromArgb(31, 136, 61); $b.Load.ForeColor = [System.Drawing.Color]::White; $b.Load.FlatStyle = 'Flat'
+    Set-CPPrimary $b.Load
     $b.OpenLink = New-CPButton 'Open problem page'
     $b.OpenFile = New-CPButton 'Open file'
     $b.Backups = New-CPButton 'Backups'
@@ -767,6 +1049,7 @@ function Show-CPBrowser {
     $bottom.Controls.Add($b.Status, 0, 0); $bottom.Controls.Add($btns, 1, 0)
     $root.Controls.Add($bottom, 0, 3)
     $f.Controls.Add($root)
+    $f.Controls.Add($hdr.Panel)
 
     # ---------------------------------------------------------------- data
     $dt = New-Object System.Data.DataTable
@@ -887,8 +1170,10 @@ function Show-CPBrowser {
         elseif ($e.KeyCode -eq 'Enter' -and $g.Focused) { $e.SuppressKeyPress = $true; Invoke-CPSafe -What 'Loading the solution' $doLoad }
     })
     $f.Add_Shown({
+        Show-CPForeground $f
         $split.SplitterDistance = [int]($split.Height * 0.52)
         Invoke-CPSafe -What 'Reading solutions' $loadData
+        $hdr.Right.Text = Format-CPStats $Config.RepoPath
         $b.Search.Focus()
     })
     [void]$f.ShowDialog()
@@ -907,11 +1192,8 @@ function Show-CPTemplatePicker {
     #>
     param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$ConfigPath, [string]$Language)
 
-    $f = New-Object System.Windows.Forms.Form
-    $f.Text = 'CP Solution Saver - Code templates'; $f.Font = $script:CPFont; $f.StartPosition = 'CenterScreen'
-    $f.Size = New-Object System.Drawing.Size(980, 660); $f.MinimumSize = New-Object System.Drawing.Size(760, 480)
-    $f.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi; $f.KeyPreview = $true
-    $ico = Get-CPAppIcon; if ($ico) { $f.Icon = $ico }
+    $f = New-CPForm 'CP Solution Saver - Code templates' 1000 700 780 520
+    $hdr = New-CPHeader 'Code templates' 'Load a template into your practice file, or choose what "reset after saving" uses'
     $t = @{ Loaded = $false; Items = @() }
 
     $root = New-Object System.Windows.Forms.TableLayoutPanel
@@ -922,8 +1204,6 @@ function Show-CPTemplatePicker {
         if ($rs -eq 'Percent') { [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100))) }
         else { [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize))) }
     }
-    $title = New-CPLabel 'Code templates' $script:CPFontTitle; $title.ForeColor = $script:CPAccent
-    $root.Controls.Add($title, 0, 0); $root.SetColumnSpan($title, 2)
 
     $top = New-Object System.Windows.Forms.FlowLayoutPanel; $top.AutoSize = $true; $top.Dock = 'Fill'
     $top.Controls.Add((New-CPLabel 'Language:'))
@@ -951,7 +1231,7 @@ function Show-CPTemplatePicker {
     $status = New-CPLabel ''; $status.AutoSize = $false; $status.Dock = 'Fill'; $status.AutoEllipsis = $true; $status.TextAlign = 'MiddleLeft'
     $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.AutoSize = $true; $btns.WrapContents = $false
     $load = New-CPButton 'Load into practice file' 190
-    $load.Font = $script:CPFontBold; $load.BackColor = [System.Drawing.Color]::FromArgb(31, 136, 61); $load.ForeColor = [System.Drawing.Color]::White; $load.FlatStyle = 'Flat'
+    Set-CPPrimary $load
     $useReset = New-CPButton 'Use for "reset after saving"'
     $edit = New-CPButton 'Edit'
     $close = New-CPButton 'Close'
@@ -959,6 +1239,7 @@ function Show-CPTemplatePicker {
     $bottom.Controls.Add($status, 0, 0); $bottom.Controls.Add($btns, 1, 0)
     $root.Controls.Add($bottom, 0, 3); $root.SetColumnSpan($bottom, 2)
     $f.Controls.Add($root)
+    $f.Controls.Add($hdr.Panel)
 
     $defaultName = {
         param($language)
@@ -1016,6 +1297,7 @@ function Show-CPTemplatePicker {
     })
     $f.Add_KeyDown({ param($s, $e) if ($e.KeyCode -eq 'Escape') { $f.Close() } })
     $f.Add_Shown({
+        Show-CPForeground $f
         Invoke-CPSafe -What 'Reading templates' {
             $all = @(Get-CPTemplates)
             $langs = @($all | ForEach-Object { $_.Language } | Select-Object -Unique)

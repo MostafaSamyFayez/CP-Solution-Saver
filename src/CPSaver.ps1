@@ -15,6 +15,8 @@
     CPSaver.ps1 -Settings          # open the settings window
     CPSaver.ps1 -Quick             # quick save: no window, just a notification with the result
     CPSaver.ps1 -Browse            # browse / search solved problems and load one into main.cpp
+    CPSaver.ps1 -Tray [-Command open|quick|browse|templates|settings]
+                                   # tray host: stays running, owns the hotkeys (started by CPSaverLauncher.exe)
 #>
 [CmdletBinding()]
 param(
@@ -31,6 +33,8 @@ param(
     [switch]$Quick,
     [switch]$NoNotify,
     [switch]$Browse,
+    [switch]$Tray,
+    [string]$Command = 'tray',
     [switch]$Version
 )
 
@@ -38,6 +42,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'CPSaver.Core.psm1') -Force -DisableNameChecking
 
 if ($Version) { "CP Solution Saver $(Get-CPAppVersion)"; return }
+if (-not $ConfigPath -and $env:CPSAVER_CONFIG) { $ConfigPath = $env:CPSAVER_CONFIG }   # used by the tests
 if (-not $ConfigPath) { $ConfigPath = Get-CPDefaultConfigPath }
 $config = Get-CPConfig -Path $ConfigPath
 if ($MainCpp) {
@@ -49,18 +54,51 @@ Initialize-CPTemplates | Out-Null
 
 $isWindowsHost = ($env:OS -eq 'Windows_NT')
 
+# ---------------------------------------------------------------- tray host
+if ($Tray -and $isWindowsHost) {
+    . (Join-Path $PSScriptRoot 'CPSaver.Gui.ps1')
+    if ($script:CPNative) {
+        $created = $false
+        $script:CPHostMutex = New-Object System.Threading.Mutex($true, [CPSaverNative.HostWindow]::MutexName, [ref]$created)
+        if (-not $created) {
+            # another host is running: pass the command on and leave
+            try { $ev = [System.Threading.EventWaitHandle]::OpenExisting([CPSaverNative.HostWindow]::EventName($Command)); [void]$ev.Set() } catch { }
+            exit 0
+        }
+        . (Join-Path $PSScriptRoot 'CPSaver.Tray.ps1')
+        Start-CPTray -Command $Command -ConfigPath $ConfigPath
+        exit 0
+    }
+    # no native helper (not compiled): run the command once without the tray
+    switch ($Command) { 'quick' { $Quick = $true } 'browse' { $Browse = $true } 'settings' { $Settings = $true } }
+}
+
 # ---------------------------------------------------------------- quick save
 if ($Quick) {
     if ($NoFetch) { $config.AutoFetch = $false }
     if ($NoPush) { $config.PushAfterSave = $false }
     if ($NoReset) { $config.ResetAfterSave = $false }
     if ($MainCpp) { $config.PracticeFiles = @($config.MainCppPath) }
+    $showUi = $isWindowsHost -and -not $NoNotify
+    $busy = $null
+    if ($showUi) {
+        . (Join-Path $PSScriptRoot 'CPSaver.Gui.ps1')
+        $f0 = Get-CPActivePracticeFile $config
+        $busy = Show-CPBusy "Saving $(if ($f0) { [IO.Path]::GetFileName($f0) } else { 'solution' }) ..."
+    }
     $res = Invoke-CPQuickSave -Config $config -Log { param($m) Write-Verbose $m }
     $res.Log | ForEach-Object { Write-Output $_ }
-    if ($isWindowsHost -and -not $NoNotify) {
-        . (Join-Path $PSScriptRoot 'CPSaver.Gui.ps1')
-        $open = Show-CPNotification -Title $res.Title -Lines $res.Summary -IsError:(-not $res.Success) -Mode ([string]$config.QuickSaveNotify) -LogFile $res.LogFile
-        if ($open) { Show-CPMainWindow -Config $config -ConfigPath $ConfigPath }
+    if ($showUi) {
+        if ($busy) { $busy.Close() }
+        if (-not $res.Success) {
+            $lines = @($res.Summary); if ($res.LogFile) { $lines += "Details: $($res.LogFile)" }
+            if ((Show-CPResultDialog -Title $res.Title -Lines $lines -Kind Error -OfferOpen) -eq 'open') { Show-CPMainWindow -Config $config -ConfigPath $ConfigPath }
+        } elseif ([string]$config.QuickSaveNotify -eq 'notification') {
+            Show-CPNotification -Title $res.Title -Lines $res.Summary -Mode 'notification' | Out-Null
+        } else {
+            $url = $null; if ($res.RelPath) { try { $url = Get-CPFileWebUrl -RepoPath $config.RepoPath -RelPath $res.RelPath } catch { } }
+            Show-CPResultDialog -Title $res.Title -Lines $res.Summary -Kind $(if ($res.Title -like 'Already saved*') { 'Info' } else { 'Success' }) -Url $url | Out-Null
+        }
     }
     if ($res.Success) { exit 0 } else { exit 1 }
 }

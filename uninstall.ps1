@@ -6,6 +6,15 @@
 param([switch]$RemoveSettings, [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\CPSolutionSaver'))
 
 Set-Location $env:TEMP
+# stop the tray app first (its files are in use)
+try {
+    $ev = [System.Threading.EventWaitHandle]::OpenExisting('Local\CPSolutionSaver_cmd_exit'); [void]$ev.Set(); $ev.Dispose()
+    for ($i = 0; $i -lt 60; $i++) { try { $m = [System.Threading.Mutex]::OpenExisting('Local\CPSolutionSaver_Host'); $m.Dispose(); Start-Sleep -Milliseconds 100 } catch { break } }
+    Start-Sleep -Milliseconds 300
+    Write-Host 'Stopped CP Solution Saver (tray).'
+} catch { }
+$startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'CP Solution Saver.lnk'
+if (Test-Path -LiteralPath $startup) { Remove-Item -LiteralPath $startup -Force; Write-Host "Removed $startup" }
 $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'CP Solution Saver'
 $desk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'CP Solution Saver.lnk'
 foreach ($p in @($menu, $desk, $InstallDir)) {

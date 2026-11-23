@@ -12,7 +12,7 @@
 # ----------------------------------------------------------------------------
 
 $script:AppName    = 'CPSolutionSaver'
-$script:AppVersion = '2.2.0'
+$script:AppVersion = '2.3.0'
 
 function Get-CPAppVersion { $script:AppVersion }
 
@@ -41,6 +41,7 @@ function Get-CPDefaultConfig {
         AutoFetch        = $true
         PushAfterSave    = $true
         ResetAfterSave   = $true
+        CloseAfterSave   = $true     # close the window after a successful save
         UpdateIndexes    = $true
         QuickSaveNotify  = 'dialog'  # 'dialog' (message box in the middle of the screen) or 'notification'
         BackupsToKeep    = 30
@@ -681,6 +682,18 @@ function ConvertTo-CPSolutionText {
 #  Scanning the solutions repo
 # ----------------------------------------------------------------------------
 
+$script:SolutionCache = @{}
+
+function Get-CPStats {
+    <# Small numbers for the header: total solved, solved in the last 7 days. #>
+    param([Parameter(Mandatory)][string]$RepoPath)
+    $all = @(Get-CPAllSolutions $RepoPath)
+    $weekAgo = (Get-Date).AddDays(-7).ToString('yyyy-MM-dd')
+    $week = @($all | Where-Object { $_.DateSolved -ge $weekAgo }).Count
+    $problems = @($all | ForEach-Object { if ($_.Key) { $_.Key } else { $_.RelPath } } | Select-Object -Unique).Count
+    return @{ Files = $all.Count; Problems = $problems; ThisWeek = $week }
+}
+
 function Get-CPAllSolutions {
     <# Reads the header of every solution file in the repo (skips .git, Index). #>
     param([Parameter(Mandatory)][string]$RepoPath)
@@ -692,6 +705,10 @@ function Get-CPAllSolutions {
         Where-Object { $exts -contains $_.Extension.ToLowerInvariant() -and $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch '[\\/]Index[\\/]' }
     foreach ($file in $files) {
         $rel = $file.FullName.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/'
+        # cache: a file that has not changed since the last scan is not read again
+        $ck = $file.FullName.ToLowerInvariant()
+        $stamp = "$($file.LastWriteTimeUtc.Ticks)|$($file.Length)|$root"
+        if ($script:SolutionCache.ContainsKey($ck) -and $script:SolutionCache[$ck].Stamp -eq $stamp) { $list.Add($script:SolutionCache[$ck].Item); continue }
         $text = ''
         try { $text = [IO.File]::ReadAllText($file.FullName) } catch { continue }
         $h = Read-CPHeader $text
@@ -701,7 +718,7 @@ function Get-CPAllSolutions {
         $plat = if ($f.Contains('Platform') -and $f['Platform']) { $f['Platform'] } else { ($rel -split '/')[0] }
         if ($rel -notmatch '/') { $plat = (Get-CPPlatformInfo $link).Platform }
         $lang = Get-CPLanguage $file.Extension
-        $list.Add([pscustomobject]@{
+        $item = ([pscustomobject]@{
             RelPath    = $rel
             Name       = $name
             Link       = $link
@@ -716,6 +733,8 @@ function Get-CPAllSolutions {
             Ext        = $file.Extension.ToLowerInvariant()
             FullPath   = $file.FullName
         })
+        $script:SolutionCache[$ck] = @{ Stamp = $stamp; Item = $item }
+        $list.Add($item)
     }
     return $list.ToArray()
 }
@@ -1567,6 +1586,17 @@ function New-CPGitHubRepo {
     $body = @{ name = $Name; description = $Description; private = [bool]$Private; auto_init = $true } | ConvertTo-Json
     $r = Invoke-RestMethod -Method Post -Uri 'https://api.github.com/user/repos' -Headers $headers -Body $body -ContentType 'application/json'
     return $r.clone_url
+}
+
+function Get-CPFileWebUrl {
+    <# GitHub page of a file in the solutions repo (current branch). #>
+    param([Parameter(Mandatory)][string]$RepoPath, [Parameter(Mandatory)][string]$RelPath)
+    $base = Get-CPRepoWebUrl $RepoPath
+    if (-not $base) { return $null }
+    $branch = (Invoke-CPGit $RepoPath rev-parse --abbrev-ref HEAD).Output
+    if (-not $branch -or $branch -eq 'HEAD') { $branch = 'main' }
+    $path = (($RelPath -replace '\\', '/') -split '/' | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
+    return "$base/blob/$branch/$path"
 }
 
 function Get-CPRepoWebUrl {

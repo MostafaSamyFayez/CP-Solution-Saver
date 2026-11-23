@@ -14,7 +14,7 @@ if not exist "%~dp0app\install.ps1" (
 )
 if /i "%~1"=="-Quiet" goto console
 if /i "%~1"=="-Console" goto console
-start "" powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "%~dp0app\install.ps1" -Gui %*
+start "" wscript.exe "%~dp0app\setup.vbs" %*
 exit /b 0
 
 :console

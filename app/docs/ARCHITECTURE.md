@@ -56,6 +56,7 @@ README.md                    user guide
 LICENSE
 app/
   install.ps1                installer (window, console or -Quiet)          -> section 12
+  setup.vbs                  starts install.ps1 -Gui without a console (used by Install.bat)
   uninstall.ps1              uninstaller (asks first)                       -> section 12
   run-tests.bat              runs tests\Run-Tests.ps1 -Online
   CHANGELOG.md               what changed in each version
@@ -302,7 +303,9 @@ Imports Core, reads the config (`-ConfigPath`, else `$env:CPSAVER_CONFIG`, else 
 ## 12. Installer, uninstaller, release
 
 **`Install.bat`** checks that `app\install.ps1` exists (else: "extract the zip first"), then
-starts `install.ps1 -Gui` hidden. `Install.bat -Console` / `-Quiet` run in the console.
+starts `app\setup.vbs`, which runs `install.ps1 -Gui` with no console window (a VBScript
+`Run ..., 0` is used because Windows Terminal ignores `-WindowStyle Hidden`). `Install.bat -Console`
+/ `-Quiet` run in the console. The uninstall shortcut uses `uninstall.vbs` the same way.
 
 **`install.ps1`**: the steps are in one scriptblock (`$installSteps`) that is dot-sourced
 inside try/catch; `Step` / `Ok` / `Warn` report either to the console or to the progress window
@@ -362,6 +365,8 @@ GUI windows are not driven by the tests; check them by hand (section 16 has a sa
 * **Labels and `&`**: WinForms treats `&` as a mnemonic; set `UseMnemonic = $false` on labels
   that show user text, or write `&&` in button text.
 * **One quick-save log per run**, no secrets in logs: the GitHub token must never be printed.
+* **Hidden windows**: start PowerShell without a console through a `.vbs` (`WScript.Shell.Run cmd, 0`);
+  `-WindowStyle Hidden` alone still flashes a window when Windows Terminal is the default console.
 * **Every button needs an `Add_Click`** (a test checks `$ui.<Name> = New-CPButton` buttons).
 
 ## 15. Recipes: common changes

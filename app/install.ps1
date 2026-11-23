@@ -79,7 +79,7 @@ function New-InstallText([string]$Text, $Color = $null, $Font = $null) {
 function Show-InstallWelcome {
     <# First page: what will happen + options. Returns @{ Desktop; Startup } or $null (cancelled). #>
     $update = Test-Path -LiteralPath (Join-Path $InstallDir 'CPSaver.ps1')
-    $f = New-CPForm 'CP Solution Saver Setup' 600 440
+    $f = New-CPForm 'CP Solution Saver Setup' 600 200
     $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.BackColor = [System.Drawing.Color]::White
     $f.AutoSize = $true; $f.AutoSizeMode = 'GrowOnly'
     $hdr = New-CPHeader $(if ($update) { 'Update CP Solution Saver' } else { 'Install CP Solution Saver' }) "Version $(Get-CPAppVersion)"
@@ -101,8 +101,8 @@ function Show-InstallWelcome {
     $g.Controls.Add($gl)
     $desk = New-Object System.Windows.Forms.CheckBox; $desk.Text = 'Create a Desktop shortcut'; $desk.AutoSize = $true; $desk.Checked = -not $NoDesktopShortcut
     $desk.Margin = New-Object System.Windows.Forms.Padding(3, 12, 3, 2)
-    $start = New-Object System.Windows.Forms.CheckBox; $start.Text = 'Start with Windows (recommended: keeps the shortcuts instant, runs quietly in the tray)'; $start.AutoSize = $true
-    $start.Checked = -not $NoStartup; $start.MaximumSize = New-Object System.Drawing.Size(520, 0)
+    $start = New-Object System.Windows.Forms.CheckBox; $start.Text = 'Start with Windows (recommended - keeps the shortcuts instant)'; $start.AutoSize = $true
+    $start.Checked = -not $NoStartup
     $g.Controls.Add($desk); $g.Controls.Add($start)
     $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.FlowDirection = 'RightToLeft'; $btns.AutoSize = $true; $btns.Dock = 'Fill'
     $btns.Margin = New-Object System.Windows.Forms.Padding(0, 16, 0, 0)
@@ -139,7 +139,7 @@ function Show-InstallProgress {
 function Show-InstallDone {
     <# Last page. -Failed shows the error. #>
     param([string]$Message, [switch]$Failed)
-    $f = New-CPForm 'CP Solution Saver Setup' 600 380
+    $f = New-CPForm 'CP Solution Saver Setup' 600 200
     $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.BackColor = [System.Drawing.Color]::White
     $f.AutoSize = $true; $f.AutoSizeMode = 'GrowOnly'
     $hdr = New-CPHeader $(if ($Failed) { 'Setup could not finish' } else { 'CP Solution Saver is installed' }) "Version $(Get-CPAppVersion)"; $hdr.Right.Visible = $false
@@ -150,7 +150,7 @@ function Show-InstallDone {
         $g.Controls.Add((New-InstallText "Details are in the install log:`r`n$($script:InstallLog)" $script:CPMuted))
     } else {
         $g.Controls.Add((New-InstallText 'Click Finish to open it. A short tour shows you how to use it, then you choose your practice file and solutions folder (only the first time).' $script:CPAccent))
-        $g.Controls.Add((New-InstallText "Shortcuts:   Ctrl+Alt+Shift+S  save    |    Ctrl+Alt+Shift+F  quick save    |    Ctrl+Alt+Shift+B  solved problems" $script:CPAccent $script:CPFontBold))
+        $g.Controls.Add((New-InstallText "Ctrl+Alt+Shift+S   save window`r`nCtrl+Alt+Shift+F   quick save`r`nCtrl+Alt+Shift+B   solved problems" $script:CPAccent $script:CPFontBold))
         $g.Controls.Add((New-InstallText 'It lives in the tray, next to the clock (right-click the icon for everything). You can delete the downloaded folder now.' $script:CPMuted))
         foreach ($w in $script:Warnings) { $g.Controls.Add((New-InstallText $w $script:CPOrange)) }
     }
@@ -240,7 +240,10 @@ sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidd
     $cmd = "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0CPSaver.ps1`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $InstallDir 'cpsaver.cmd'), $cmd, [Text.Encoding]::ASCII)
     # uninstall.bat asks in a window (no console); "uninstall.bat -Yes [-RemoveSettings]" runs without questions
-    $un = "@echo off`r`nif /i `"%~1`"==`"-Yes`" (`r`n    powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0uninstall.ps1`" %*`r`n) else (`r`n    start `"`" powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"%~dp0uninstall.ps1`" %*`r`n)`r`n"
+    # uninstall.vbs starts the uninstall window without a console (Windows Terminal ignores -WindowStyle Hidden)
+    $unVbs = "Set sh = CreateObject(`"WScript.Shell`")`r`ndir = CreateObject(`"Scripting.FileSystemObject`").GetParentFolderName(WScript.ScriptFullName)`r`nsh.Run `"powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"`"`" & dir & `"\uninstall.ps1`"`"`", 0, False`r`n"
+    [IO.File]::WriteAllText((Join-Path $InstallDir 'uninstall.vbs'), $unVbs, [Text.Encoding]::ASCII)
+    $un = "@echo off`r`nif /i `"%~1`"==`"-Yes`" (`r`n    powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0uninstall.ps1`" %*`r`n) else (`r`n    start `"`" wscript.exe `"%~dp0uninstall.vbs`"`r`n)`r`n"
     [IO.File]::WriteAllText((Join-Path $InstallDir 'uninstall.bat'), $un, [Text.Encoding]::ASCII)
     Get-ChildItem $InstallDir -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
     Ok 'Files copied.'
@@ -301,8 +304,8 @@ sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidd
         New-Shortcut (Join-Path $menu 'CP Solution Saver - How to use.lnk') 'welcome' 'A short tour of CP Solution Saver and its shortcuts' ''
     }
     $u = $shell.CreateShortcut((Join-Path $menu 'Uninstall CP Solution Saver.lnk'))
-    $u.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $u.Arguments = "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$(Join-Path $InstallDir 'uninstall.ps1')`""
+    $u.TargetPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
+    $u.Arguments = "`"$(Join-Path $InstallDir 'uninstall.vbs')`""
     $u.WorkingDirectory = $env:TEMP; $u.IconLocation = $icon; $u.WindowStyle = 7; $u.Description = 'Uninstall CP Solution Saver (asks first)'; $u.Save()
     $r = $shell.CreateShortcut((Join-Path $menu 'Read me.lnk'))
     $r.TargetPath = Join-Path $InstallDir 'README.md'; $r.Save()

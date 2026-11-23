@@ -12,7 +12,7 @@
 # ----------------------------------------------------------------------------
 
 $script:AppName    = 'CPSolutionSaver'
-$script:AppVersion = '2.3.1'
+$script:AppVersion = '2.3.2'
 
 function Get-CPAppVersion { $script:AppVersion }
 
@@ -938,6 +938,13 @@ function Save-CPSolution {
     if (-not $Info.Name) { & $emit 'ERROR: The problem name is empty.'; return $result }
     if (-not (Test-CPGitAvailable)) { & $emit 'ERROR: git is not installed or not on PATH.'; return $result }
     if (-not (Test-Path -LiteralPath (Join-Path $RepoPath '.git'))) { & $emit "ERROR: '$RepoPath' is not a git repository."; return $result }
+    # git needs a name + email for every commit (even offline); say so clearly instead of a git error
+    $gitName = (Invoke-CPGit $RepoPath config user.name).Output; $gitMail = (Invoke-CPGit $RepoPath config user.email).Output
+    if (-not "$gitName".Trim() -or -not "$gitMail".Trim()) {
+        & $emit ('ERROR: Git does not know your name and email yet (it records them with every save, even without GitHub). ' +
+            'Open Command Prompt and run:' + "`n" + '  git config --global user.name "Your Name"' + "`n" + '  git config --global user.email "you@example.com"' + "`n" + 'then save again.')
+        return $result
+    }
 
     if (-not $Info.Platform) { $Info.Platform = (Get-CPPlatformInfo $Info.Link).Platform }
     Update-CPSolutionPath $Info

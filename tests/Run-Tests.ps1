@@ -221,6 +221,32 @@ try {
     $bk2 = Import-CPSolution -Config $mc2 -RelPath 'CSES/1068_Weird_Algorithm.py'
     Check 'loading a .py solution goes into main.py' ((Get-Content $mainPy -Raw) -match 'Weird Algorithm' -and $bk2)
 
+    Write-Host "`n[13] Local-only repo (just 'git init', no GitHub, no commits yet)" -ForegroundColor Cyan
+    $local = Join-Path $tmp 'local-only'
+    New-Item -ItemType Directory -Path $local | Out-Null
+    RunGit $local init -q | Out-Null
+    RunGit $local config user.email test@example.com | Out-Null; RunGit $local config user.name tester | Out-Null
+    $li = New-CPSolutionInfo -Code $code
+    $lr = Save-CPSolution -Info $li -RepoPath $local -Push -UpdateIndexes
+    Check 'first save into an empty git init folder succeeds' $lr.Success ($lr.Log -join ' / ')
+    Check 'nothing pushed, commit kept locally' ((-not $lr.Pushed) -and (($lr.Log -join ' ') -match 'kept locally'))
+    Check 'commit is in the local history' ((RunGit $local log -1 --format=%s) -eq 'Add Codeforces 1234A - Two Arrays')
+    Check 'README + indexes created' ((Test-Path (Join-Path $local 'README.md')) -and (Test-Path (Join-Path $local 'Index/BY_TOPIC.md')))
+    $lr2 = Save-CPSolution -Info (New-CPSolutionInfo -Code $code) -RepoPath $local -Push -UpdateIndexes
+    Check 'saving the same code again = no change' ($lr2.Success -and (($lr2.Log -join ' ') -match 'No changes'))
+    Check 'listed in solved problems' (@(Get-CPAllSolutions -RepoPath $local).Count -eq 1)
+    # no name/email configured anywhere -> clear message, nothing written
+    $noId = Join-Path $tmp 'no-identity'
+    New-Item -ItemType Directory -Path $noId | Out-Null
+    RunGit $noId init -q | Out-Null
+    $emptyCfg = Join-Path $tmp 'empty.gitconfig'; Set-Content -Path $emptyCfg -Value ''
+    $oldG = $env:GIT_CONFIG_GLOBAL; $oldS = $env:GIT_CONFIG_NOSYSTEM
+    $env:GIT_CONFIG_GLOBAL = $emptyCfg; $env:GIT_CONFIG_NOSYSTEM = '1'
+    try { $nr = Save-CPSolution -Info (New-CPSolutionInfo -Code $code) -RepoPath $noId }
+    finally { $env:GIT_CONFIG_GLOBAL = $oldG; $env:GIT_CONFIG_NOSYSTEM = $oldS }
+    Check 'missing git name/email -> clear message' ((-not $nr.Success) -and (($nr.Log -join ' ') -match 'git config --global user.name'))
+    Check 'missing git name/email -> nothing written' (-not (Test-Path (Join-Path $noId 'Codeforces')))
+
     if ($Online) {
         Write-Host "`n[11] Online lookups" -ForegroundColor Cyan
         $cf = Get-CPProblemMetadata 'https://codeforces.com/problemset/problem/4/A'

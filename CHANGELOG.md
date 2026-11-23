@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.2 - 2026-11-23
+
+### Works without GitHub
+- Tested and supported: a solutions folder made with just `git init` (no GitHub, no first
+  commit). Saves are committed locally; connect GitHub later and push them all at once.
+- If Git doesn't know your name/email yet, the save stops with a clear message telling you the
+  two commands to run (before, it was a raw git error after the file was already written).
+
 ## 2.3.1 - 2026-11-23
 
 ### Fixed

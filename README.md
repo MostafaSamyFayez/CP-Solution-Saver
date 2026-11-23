@@ -47,6 +47,7 @@ lookups and GitHub pushes run in the background so the window never freezes.
 15. [Uninstall](#uninstall)
 16. [Troubleshooting](#troubleshooting)
 17. [Project layout](#project-layout)
+18. [For developers](#for-developers)
 
 ---
 
@@ -82,7 +83,10 @@ default options). A GitHub account is **optional**. No admin rights needed.
 1. **Download [CP-Solution-Saver.zip](https://github.com/MostafaSamyFayez/CP-Solution-Saver/releases/latest/download/CP-Solution-Saver.zip)** (always the latest version).
 2. Right-click the zip > **Extract All...**, then open the extracted folder.
 3. Double-click **`Install.bat`**. (If a blue Windows *"protected your PC"* box appears: *More info* > *Run anyway*.)
-4. Follow the **welcome window**: a short tour of the shortcuts, then choose
+   The setup window opens: click **Install**, wait a few seconds, then **Finish**.
+
+   ![Setup window](app/docs/screenshot-setup.png)
+4. The app opens with a short **welcome tour** of the shortcuts (after every install), then you choose
    - your **practice file** (`main.cpp`, and if you like `main.c` / `main.py`), and
    - a **folder for your solutions**: any **empty folder** works (it becomes a repo by itself). Already have
      a solutions repo on GitHub? Use **Clone a GitHub repo...** instead.
@@ -438,6 +442,14 @@ app/
   docs/                     screenshots
   CHANGELOG.md
 ```
+
+## For developers
+
+**[app/docs/ARCHITECTURE.md](app/docs/ARCHITECTURE.md)** explains how everything fits together:
+the processes (tray host, launcher, named events), the files on the user's PC and the config
+schema, the solutions repo format, every module and window, the save pipeline, the installer and
+release process, the tests, PowerShell 5.1 gotchas, and step-by-step recipes (add a platform, a
+language, a setting, a button, a tray command, a test; make a release).
 
 ## License
 

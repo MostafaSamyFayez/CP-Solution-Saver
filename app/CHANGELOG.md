@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.5.0 - 2026-11-23
+
+### Setup window
+- `Install.bat` opens a small setup window instead of console text: what will happen, options
+  (Desktop shortcut, start with Windows), a progress bar, and a final page with the shortcuts.
+  If Git is missing it says so, with a link to download it. Errors are shown with the install log.
+- After **Finish** the app opens right away: the welcome tour (shown again after every install,
+  whatever happened before), Settings if needed, then the save window.
+- `Install.bat -Console` and `-Quiet` still work in the console.
+
+### Look
+- Save window: the buttons sit in two tidy rows (main actions, then the rest); "Platform:" label.
+- New screenshots in the README.
+
+### For developers
+- `app/docs/ARCHITECTURE.md`: a full guide to how the app works and how to change it.
+
 ## 2.4.2 - 2026-11-23
 
 ### Uninstall asks first

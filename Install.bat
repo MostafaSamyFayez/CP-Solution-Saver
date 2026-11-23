@@ -1,6 +1,8 @@
 @echo off
-title CP Solution Saver - Install
-REM Double-click to install CP Solution Saver for the current user (no admin rights needed).
+REM Double-click to install (or update) CP Solution Saver for the current user. No admin rights needed.
+REM   Install.bat            the setup window (normal use)
+REM   Install.bat -Console   the same steps in this console window
+REM   Install.bat -Quiet     no questions, no tour (updates / scripts)
 if not exist "%~dp0app\install.ps1" (
     echo.
     echo   The installer files were not found next to Install.bat.
@@ -10,6 +12,12 @@ if not exist "%~dp0app\install.ps1" (
     pause
     exit /b 1
 )
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0app\install.ps1" %*
+if /i "%~1"=="-Quiet" goto console
+if /i "%~1"=="-Console" goto console
+start "" powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "%~dp0app\install.ps1" -Gui %*
+exit /b 0
+
+:console
+powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0app\install.ps1" %*
 echo.
 pause

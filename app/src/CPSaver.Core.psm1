@@ -12,7 +12,7 @@
 # ----------------------------------------------------------------------------
 
 $script:AppName    = 'CPSolutionSaver'
-$script:AppVersion = '2.4.2'
+$script:AppVersion = '2.5.0'
 
 function Get-CPAppVersion { $script:AppVersion }
 

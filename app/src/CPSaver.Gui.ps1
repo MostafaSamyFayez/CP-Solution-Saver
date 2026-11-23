@@ -841,7 +841,7 @@ function Show-CPMainWindow {
     $ui.Link = New-CPTextBox; $grid.Controls.Add($ui.Link, 1, $row)
     $ui.Fetch = New-CPButton 'Look up online'; $grid.Controls.Add($ui.Fetch, 2, $row); $row++
 
-    $grid.Controls.Add((New-CPLabel 'Platform / ID:'), 0, $row)
+    $grid.Controls.Add((New-CPLabel 'Platform:'), 0, $row)
     $pp = New-Object System.Windows.Forms.TableLayoutPanel; $pp.Dock = 'Fill'; $pp.ColumnCount = 3; $pp.AutoSize = $true; $pp.Margin = New-Object System.Windows.Forms.Padding(0)
     [void]$pp.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 50)))
     [void]$pp.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
@@ -888,7 +888,9 @@ function Show-CPMainWindow {
     $grid.Controls.Add($opts, 0, $row); $grid.SetColumnSpan($opts, 3); $row++
 
     # buttons
-    $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.AutoSize = $true; $btns.Dock = 'Fill'; $btns.WrapContents = $true
+    # two rows: the main actions, then the less frequent ones
+    $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.AutoSize = $true; $btns.Dock = 'Fill'; $btns.WrapContents = $false
+    $btns2 = New-Object System.Windows.Forms.FlowLayoutPanel; $btns2.AutoSize = $true; $btns2.Dock = 'Fill'; $btns2.WrapContents = $false
     $ui.Save = New-CPButton 'Save && Push   (Ctrl+S)' 200
     Set-CPPrimary $ui.Save; $ui.Save.Padding = New-Object System.Windows.Forms.Padding(14, 7, 14, 7)
     $ui.Rebuild = New-CPButton 'Rebuild index'
@@ -898,8 +900,10 @@ function Show-CPMainWindow {
     $ui.Browse = New-CPButton 'Solved problems...'
     $ui.Templates = New-CPButton 'Templates...'
     $ui.Help = New-CPButton 'How to use'
-    foreach ($b in @($ui.Save, $ui.Browse, $ui.Templates, $ui.Rebuild, $ui.OpenFolder, $ui.OpenWeb, $ui.Settings, $ui.Help)) { $btns.Controls.Add($b) }
+    foreach ($b in @($ui.Save, $ui.Browse, $ui.Templates, $ui.Settings)) { $btns.Controls.Add($b) }
+    foreach ($b in @($ui.OpenFolder, $ui.OpenWeb, $ui.Rebuild, $ui.Help)) { $b.Font = $script:CPFontSmall; $btns2.Controls.Add($b) }
     $grid.Controls.Add($btns, 0, $row); $grid.SetColumnSpan($btns, 3); $row++
+    $grid.Controls.Add($btns2, 0, $row); $grid.SetColumnSpan($btns2, 3); $row++
 
     $ui.Status = New-CPLabel 'Ready.' $script:CPFontBold
     $grid.Controls.Add($ui.Status, 0, $row); $grid.SetColumnSpan($ui.Status, 3); $row++

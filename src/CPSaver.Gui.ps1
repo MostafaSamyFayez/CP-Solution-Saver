@@ -973,7 +973,7 @@ function Show-CPBrowser {
     #>
     param([Parameter(Mandatory)]$Config, [scriptblock]$OnLoaded)
 
-    $f = New-CPForm 'CP Solution Saver - Solved problems' 1140 800 820 560
+    $f = New-CPForm 'CP Solution Saver - Solved problems' 1220 800 900 560
     $hdr = New-CPHeader 'Solved problems' 'Search, filter, preview, and load a solution back   |   Ctrl+F search   |   Enter load'
     $b = @{}
 
@@ -994,16 +994,16 @@ function Show-CPBrowser {
         if ($w) { [void]$flt.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $w))) }
         else { [void]$flt.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize))) }
     }
-    $mkCombo = { $c = New-Object System.Windows.Forms.ComboBox; $c.DropDownStyle = 'DropDownList'; $c.Font = $script:CPFont; $c.Width = 150; $c.Anchor = [System.Windows.Forms.AnchorStyles]::Left; $c }
+    $mkCombo = { $c = New-Object System.Windows.Forms.ComboBox; $c.DropDownStyle = 'DropDownList'; $c.Font = $script:CPFont; $c.Width = 120; $c.DropDownWidth = 200; $c.Anchor = [System.Windows.Forms.AnchorStyles]::Left; $c }
     $b.Search = New-CPTextBox
-    $b.Search.Dock = 'None'; $b.Search.Width = 250; $b.Search.Anchor = [System.Windows.Forms.AnchorStyles]::Left
-    $b.Platform = & $mkCombo; $b.Topic = & $mkCombo; $b.Topic.Width = 180; $b.Diff = & $mkCombo; $b.Lang = & $mkCombo; $b.Lang.Width = 110
+    $b.Search.Dock = 'None'; $b.Search.Width = 190; $b.Search.Anchor = [System.Windows.Forms.AnchorStyles]::Left
+    $b.Platform = & $mkCombo; $b.Topic = & $mkCombo; $b.Topic.Width = 150; $b.Diff = & $mkCombo; $b.Lang = & $mkCombo; $b.Lang.Width = 95
     $b.Clear = New-CPButton 'Clear'
     $flt.Controls.Add((New-CPLabel 'Search:'), 0, 0); $flt.Controls.Add($b.Search, 1, 0)
-    $flt.Controls.Add((New-CPLabel '  Platform:'), 2, 0); $flt.Controls.Add($b.Platform, 3, 0)
-    $flt.Controls.Add((New-CPLabel '  Topic:'), 4, 0); $flt.Controls.Add($b.Topic, 5, 0)
-    $flt.Controls.Add((New-CPLabel '  Difficulty:'), 6, 0); $flt.Controls.Add($b.Diff, 7, 0)
-    $flt.Controls.Add((New-CPLabel '  Language:'), 8, 0); $flt.Controls.Add($b.Lang, 9, 0)
+    $flt.Controls.Add((New-CPLabel ' Platform:'), 2, 0); $flt.Controls.Add($b.Platform, 3, 0)
+    $flt.Controls.Add((New-CPLabel ' Topic:'), 4, 0); $flt.Controls.Add($b.Topic, 5, 0)
+    $flt.Controls.Add((New-CPLabel ' Difficulty:'), 6, 0); $flt.Controls.Add($b.Diff, 7, 0)
+    $flt.Controls.Add((New-CPLabel ' Language:'), 8, 0); $flt.Controls.Add($b.Lang, 9, 0)
     $flt.Controls.Add($b.Clear, 10, 0)
     $root.Controls.Add($flt, 0, 1)
 

@@ -271,10 +271,20 @@ function Get-CPPageTitle {
 
 function Get-CPProblemMetadata {
     <#
-      Looks the problem up online. Never throws: returns @{ Ok; Name; Id;
-      Difficulty; Topics (string[]); Message }.
+      Looks the problem up online (one retry if the site times out). Never
+      throws: returns @{ Ok; Name; Id; Difficulty; Topics (string[]); Message }.
     #>
-    param([string]$Link, [int]$TimeoutSec = 8)
+    param([string]$Link, [int]$TimeoutSec = 12)
+    $r = Get-CPProblemMetadataOnce -Link $Link -TimeoutSec $TimeoutSec
+    if (-not $r.Ok -and $r.Message -match 'timed out|timeout|unable to connect|underlying connection') {
+        Start-Sleep -Milliseconds 500
+        $r = Get-CPProblemMetadataOnce -Link $Link -TimeoutSec ($TimeoutSec + 8)
+    }
+    return $r
+}
+
+function Get-CPProblemMetadataOnce {
+    param([string]$Link, [int]$TimeoutSec = 12)
     $res = @{ Ok = $false; Name = ''; Id = ''; Difficulty = ''; Topics = @(); Message = '' }
     if (-not $Link) { $res.Message = 'No link.'; return $res }
     $info = Get-CPPlatformInfo $Link
@@ -908,7 +918,9 @@ function Invoke-CPQuickSave {
         $info = New-CPSolutionInfo -Code $code -Fetch:([bool]$Config.AutoFetch)
         if ($info.Metadata) { & $emit $info.Metadata.Message }
         if (-not $info.Name) {
-            $out.Summary = @('No problem name found.', "Fill 'Problem Name:' or a Codeforces/LeetCode 'Problem Link:' in the header of main.cpp,", 'or open the full window with Ctrl+Alt+Shift+S.')
+            $out.Summary = @('No problem name found.')
+            if ($info.Metadata -and -not $info.Metadata.Ok) { $out.Summary += $info.Metadata.Message }
+            $out.Summary += @("Fill 'Problem Name:' (or a Codeforces/LeetCode 'Problem Link:') in the header of main.cpp,", 'or open the full window with Ctrl+Alt+Shift+S.')
             return $out
         }
         $res = Save-CPSolution -Info $info -RepoPath $Config.RepoPath -Push:([bool]$Config.PushAfterSave) -UpdateIndexes:([bool]$Config.UpdateIndexes) -Log $emit

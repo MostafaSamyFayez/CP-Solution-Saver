@@ -5,6 +5,10 @@ to your GitHub solutions repo **with one click**: it gets a clean file name, the
 right folder, a complete header (name, link, difficulty, topics, date), and it
 is listed in auto-generated indexes **by platform, by topic and by difficulty**.
 
+Two ways to save: the **window** (check and edit everything first) or **quick save**
+(one hotkey, no window, a notification tells you what happened). And when you want to
+study an old problem, **search your solved problems** and load one back into `main.cpp`.
+
 Made for a Visual Studio C++ practice project on Windows. No admin rights, no
 extra software besides Git.
 
@@ -17,15 +21,17 @@ extra software besides Git.
 1. [What it does](#what-it-does)
 2. [Install](#install)
 3. [Daily use](#daily-use)
-4. [The problem header](#the-problem-header)
-5. [How the solutions repo is organized](#how-the-solutions-repo-is-organized)
-6. [Settings](#settings)
-7. [Visual Studio button (optional)](#visual-studio-button-optional)
-8. [Console mode](#console-mode)
-9. [Testing](#testing)
-10. [Uninstall](#uninstall)
-11. [Troubleshooting](#troubleshooting)
-12. [Project layout](#project-layout)
+4. [Quick save (no window)](#quick-save-no-window)
+5. [Solved problems: search and load back](#solved-problems-search-and-load-back)
+6. [The problem header](#the-problem-header)
+7. [How the solutions repo is organized](#how-the-solutions-repo-is-organized)
+8. [Settings](#settings)
+9. [Visual Studio button (optional)](#visual-studio-button-optional)
+10. [Console mode](#console-mode)
+11. [Testing](#testing)
+12. [Uninstall](#uninstall)
+13. [Troubleshooting](#troubleshooting)
+14. [Project layout](#project-layout)
 
 ---
 
@@ -45,6 +51,9 @@ extra software besides Git.
 - **Commits and pushes** (`git pull --rebase` first, so pushes don't get rejected),
   with messages like `Add Codeforces 4A - Watermelon` and the topics/difficulty in the body.
 - Optionally **resets `main.cpp`** to your template for the next problem.
+- **Quick save**: `Ctrl+Alt+Shift+F` does all of the above with no window and shows a notification with the result.
+- **Solved problems browser**: search by name, filter by platform / topic / difficulty, preview the code,
+  and load a solution back into `main.cpp` (your current file is backed up first).
 
 ## Install
 
@@ -68,8 +77,9 @@ The installer:
 | Settings + template | `%APPDATA%\CPSolutionSaver\config.json`, `template.cpp` |
 | Start Menu | *CP Solution Saver* folder (app, Settings, Read me, Uninstall) |
 | Desktop | *CP Solution Saver* shortcut |
-| Hotkey | **Ctrl+Alt+Shift+S** opens the app from anywhere |
-| Practice project | `save_solution.bat` next to your `.sln` (opens the app) |
+| Hotkeys | **Ctrl+Alt+Shift+S** opens the app, **Ctrl+Alt+Shift+F** quick save (no window) |
+| Start Menu extras | *Quick Save*, *Solved problems*, *Settings*, *Read me*, *Uninstall* |
+| Practice project | `save_solution.bat` (opens the app), `quick_save.bat`, `solved_problems.bat` next to your `.sln` |
 
 You can also install non-interactively:
 
@@ -91,6 +101,48 @@ Updating = `git pull` in this repo and run `install.bat` again (your settings ar
 Window shortcuts: **Ctrl+S** save & push, **F5** reload `main.cpp`, **Esc** close.
 
 If `main.cpp` changed after the window opened, it tells you; the newest code on disk is always what gets saved.
+
+## Quick save (no window)
+
+When the header is already right, skip the window:
+
+1. Save `main.cpp` in Visual Studio (Ctrl+S).
+2. Press **Ctrl+Alt+Shift+F** (or double-click `quick_save.bat`, or Start Menu > *CP Solution Saver - Quick Save*).
+3. A Windows notification shows the result, for example:
+
+   ![Quick save result](docs/screenshot-quicksave.png)
+
+   *Saved: Way Too Long Words* · `Codeforces/71A_Way_Too_Long_Words.cpp (new)` · `Difficulty 800 | strings` · `Pushed to GitHub.`
+
+Quick save uses exactly the same steps as the window (header + online lookup, duplicate check,
+indexes, pull/commit/push) with your Settings defaults, and asks nothing. Other results:
+
+| Notification | Meaning |
+|---|---|
+| *Already saved: ...* | This exact solution is already in the repo; nothing was pushed. |
+| *Quick save failed* (message box) | No problem name could be found, a push failed, etc. It explains why and offers to open the full window. |
+
+Prefer a message box over a notification (e.g. Focus Assist hides notifications)? Settings >
+*Quick save: show a message box*. The full log of the last quick save is in
+`%APPDATA%\CPSolutionSaver\last-quick-save.log`.
+
+## Solved problems: search and load back
+
+Open it with the **Solved problems...** button in the window, Start Menu > *CP Solution Saver -
+Solved problems*, or `solved_problems.bat`.
+
+![Solved problems browser](docs/screenshot-browser.png)
+
+- **Search** box: matches name, problem ID, platform, topics, notes, file name and link (several words = all must match). `Ctrl+F` jumps to it.
+- **Platform / Topic / Difficulty** filters (built from what you've solved); **Clear** resets them.
+- Click a column header to sort (Difficulty sorts by rating, then Easy/Medium/Hard).
+- The lower half previews the selected solution.
+- **Load into main.cpp** (or double-click / Enter): asks first, **backs up your current `main.cpp`**
+  to `%APPDATA%\CPSolutionSaver\backups` (the newest 30 are kept; **Backups** button opens the folder),
+  then puts the solution into `main.cpp`. Visual Studio asks to reload the file: choose **Yes**.
+- **Open problem page** / **Open file** for the selected problem.
+
+A loaded solution keeps its header, so if you improve it and save again it **updates the same file**.
 
 ## The problem header
 
@@ -197,6 +249,9 @@ cpsaver.cmd -Cli -NoPush         :: commit only
 cpsaver.cmd -Cli -KeepBoth       :: keep the older solution too (_v2)
 cpsaver.cmd -RebuildIndex        :: regenerate README progress + Index/*.md, commit, push
 cpsaver.cmd -Settings            :: open the settings window
+cpsaver.cmd -Quick               :: quick save: no window, notification with the result
+cpsaver.cmd -Quick -NoNotify     :: quick save, result printed only (for scripts)
+cpsaver.cmd -Browse              :: open the solved-problems browser
 cpsaver.cmd -Version
 ```
 
@@ -207,7 +262,8 @@ cpsaver.cmd -Version
 Double-click **`run-tests.bat`** (or `powershell -ExecutionPolicy Bypass -File tests\Run-Tests.ps1 -Online`).
 The tests create a temporary repo with a local remote, so your real repo and GitHub are never touched.
 They cover header parsing, platform detection, saving/updating/keep-both, indexes, template reset,
-console mode end to end and (with `-Online`) the Codeforces/LeetCode/CSES/AtCoder lookups.
+console mode end to end, quick save, loading a solution back with backups, and (with `-Online`)
+the Codeforces/LeetCode/CSES/AtCoder lookups.
 
 ## Uninstall
 
@@ -223,7 +279,9 @@ your solutions repo is never touched. Settings are kept unless you run
 | *git push failed* | Your commit is saved locally. Run `git push` in the repo folder once to sign in, then use the app again. |
 | *Online lookup failed* | No internet or the site is slow; fill the fields by hand. Codeforces data is cached for a day. |
 | Wrong folder / name | Edit the fields in the window before saving, or set `Platform:` / `Problem ID:` in the header. |
-| Hotkey does nothing | Another app uses Ctrl+Alt+Shift+S. Change it: right-click the Start Menu shortcut → Properties → Shortcut key. |
+| Hotkey does nothing | Another app uses that key combination. Change it: right-click the Start Menu shortcut (*CP Solution Saver* or *Quick Save*) → Properties → Shortcut key. |
+| No quick-save notification | Focus Assist / Do Not Disturb may hide it. Switch to the message box in Settings, or read `%APPDATA%\CPSolutionSaver\last-quick-save.log`. |
+| Loaded the wrong solution | Your previous `main.cpp` is in the **Backups** folder (Solved problems window). |
 | Visual Studio asks to reload main.cpp | Expected after "Reset main.cpp"; choose **Yes**. |
 | "running scripts is disabled" | Use the shortcuts / `.bat` files: they pass `-ExecutionPolicy Bypass` for this app only. |
 
@@ -232,7 +290,7 @@ your solutions repo is never touched. Settings are kept unless you run
 ```
 src/CPSaver.ps1        entry point (window, console mode, rebuild index)
 src/CPSaver.Core.psm1  all logic: header, platforms, online lookup, saving, git, indexes
-src/CPSaver.Gui.ps1    Windows Forms window, settings, topic picker
+src/CPSaver.Gui.ps1    Windows Forms window, settings, topic picker, solved-problems browser, notifications
 install.ps1 / .bat     per-user installer
 uninstall.ps1          uninstaller
 tests/Run-Tests.ps1    self-tests

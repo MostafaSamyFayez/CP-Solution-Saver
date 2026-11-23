@@ -636,6 +636,7 @@ function Show-CPBrowser {
 
     $root = New-Object System.Windows.Forms.TableLayoutPanel
     $root.Dock = 'Fill'; $root.ColumnCount = 1; $root.RowCount = 4; $root.Padding = New-Object System.Windows.Forms.Padding(10, 8, 10, 8)
+    [void]$root.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
     [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
     [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
@@ -680,6 +681,7 @@ function Show-CPBrowser {
     [void]$prevPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
     [void]$prevPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     $b.PrevTitle = New-CPLabel 'Select a problem to preview its solution.' $script:CPFontBold
+    $b.PrevTitle.AutoSize = $false; $b.PrevTitle.Dock = 'Fill'; $b.PrevTitle.AutoEllipsis = $true; $b.PrevTitle.Height = 26
     $b.Preview = New-Object System.Windows.Forms.TextBox
     $b.Preview.Multiline = $true; $b.Preview.ReadOnly = $true; $b.Preview.ScrollBars = 'Both'; $b.Preview.WordWrap = $false
     $b.Preview.Font = New-Object System.Drawing.Font('Consolas', 10); $b.Preview.Dock = 'Fill'; $b.Preview.BackColor = [System.Drawing.Color]::FromArgb(250, 250, 250)
@@ -693,6 +695,7 @@ function Show-CPBrowser {
     [void]$bottom.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
     [void]$bottom.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
     $b.Status = New-CPLabel ''
+    $b.Status.AutoSize = $false; $b.Status.Dock = 'Fill'; $b.Status.AutoEllipsis = $true; $b.Status.TextAlign = 'MiddleLeft'
     $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.AutoSize = $true; $btns.WrapContents = $false
     $b.Load = New-CPButton 'Load into main.cpp' 170
     $b.Load.Font = $script:CPFontBold; $b.Load.BackColor = [System.Drawing.Color]::FromArgb(31, 136, 61); $b.Load.ForeColor = [System.Drawing.Color]::White; $b.Load.FlatStyle = 'Flat'
@@ -758,6 +761,7 @@ function Show-CPBrowser {
         $view.RowFilter = ($conds -join ' AND ')
         $sortCol = if ($st.SortCol -eq 'Difficulty') { 'DiffSort' } else { $st.SortCol }
         $view.Sort = "$sortCol $(if ($st.SortDesc) { 'DESC' } else { 'ASC' }), Name ASC"
+        $b.Status.ForeColor = [System.Drawing.Color]::Black
         $b.Status.Text = if ($st.Total -eq 0) { 'No solutions saved yet. Save one first, then come back here.' } else { "Showing $($view.Count) of $($st.Total) solved problems" }
         if ($view.Count -eq 0) { $b.Preview.Text = ''; $b.PrevTitle.Text = 'No match.' }
     }
@@ -795,7 +799,7 @@ function Show-CPBrowser {
         $q = "Load '$($r['Name'])' into your main.cpp?`n`n$($Config.MainCppPath)`n`nYour current main.cpp is backed up first (button 'Backups' to find it)."
         if ([System.Windows.Forms.MessageBox]::Show($q, 'Load solution', 'YesNo', 'Question') -ne 'Yes') { return }
         $backup = Import-CPSolution -Config $Config -RelPath $r['Path']
-        $b.Status.Text = "Loaded $($r['Path']) into main.cpp. Backup: $([IO.Path]::GetFileName($backup))"
+        $b.Status.Text = "Loaded $($r['Path']) into main.cpp (old main.cpp backed up)."
         $b.Status.ForeColor = $script:CPGreen
         if ($OnLoaded) { & $OnLoaded $r['Path'] }
         [System.Windows.Forms.MessageBox]::Show("Loaded into main.cpp.`n`nIf Visual Studio asks whether to reload the file, choose Yes.", 'Load solution') | Out-Null

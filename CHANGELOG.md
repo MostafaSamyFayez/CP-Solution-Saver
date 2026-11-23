@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.0 - 2026-11-23
+
+### Added
+- **Quick save**: hotkey Ctrl+Alt+Shift+F (also `quick_save.bat`, Start Menu shortcut,
+  `-Quick`) saves and pushes with no window and shows a notification with the result;
+  errors show a message box that offers to open the full window. Option to always use a
+  message box. Log of the last run in `%APPDATA%\CPSolutionSaver\last-quick-save.log`.
+- **Solved problems browser** (`Solved problems...` button, `solved_problems.bat`, Start Menu,
+  `-Browse`): search, filters by platform / topic / difficulty, sortable columns, code
+  preview, and *Load into main.cpp* with an automatic backup of the current file.
+- Online lookups retry once when a site times out.
+
+
 ## 2.0.0 - 2026-11-23
 
 A full app instead of a single script.

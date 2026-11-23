@@ -310,6 +310,29 @@ try {
     $tc.TutorialShown = $true; Save-CPConfig -Config $tc -Path $tcfgPath
     Check 'tour remembered as shown' ((Get-CPConfig $tcfgPath).TutorialShown -eq $true)
 
+    Write-Host "`n[15] Updates" -ForegroundColor Cyan
+    Check 'version compare: newer' ((Compare-CPVersion '2.10.0' '2.9.9') -eq 1)
+    Check 'version compare: v prefix + missing parts' ((Compare-CPVersion 'v2.5' '2.5.0') -eq 0)
+    Check 'version compare: older' ((Compare-CPVersion '2.4.2' '2.5.0') -eq -1)
+    $fakeRel = [pscustomobject]@{ tag_name = 'v9.0.0'; body = 'notes'; html_url = 'https://example.com/r'; published_at = '2026-01-01T00:00:00Z'
+        assets = @([pscustomobject]@{ name = 'other.zip'; browser_download_url = 'https://example.com/other.zip' }, [pscustomobject]@{ name = 'CP-Solution-Saver.zip'; browser_download_url = 'https://example.com/cp.zip' }) }
+    $ri = ConvertTo-CPReleaseInfo $fakeRel
+    Check 'release info: version + zip asset' ($ri.Version -eq '9.0.0' -and $ri.ZipUrl -eq 'https://example.com/cp.zip' -and $ri.Page -eq 'https://example.com/r')
+    Check 'newer release is offered' (Test-CPUpdateAvailable -Release $ri)
+    Check 'skipped version is not offered automatically' (-not (Test-CPUpdateAvailable -Release $ri -SkippedVersion '9.0.0'))
+    Check 'skipped version is offered when checking by hand' (Test-CPUpdateAvailable -Release $ri -SkippedVersion '9.0.0' -IgnoreSkipped)
+    $same = @{ Version = (Get-CPAppVersion); ZipUrl = 'x'; Notes = ''; Page = '' }
+    Check 'same version is not offered' (-not (Test-CPUpdateAvailable -Release $same))
+    $env:CPSAVER_CURRENT_VERSION = '1.0.0'
+    try { Check 'CPSAVER_CURRENT_VERSION pretends an older install' (Test-CPUpdateAvailable -Release $same) } finally { $env:CPSAVER_CURRENT_VERSION = $null }
+    Check 'release without the zip is not offered' (-not (Test-CPUpdateAvailable -Release @{ Version = '99.0'; ZipUrl = ''; Notes = ''; Page = '' }))
+    $now = [datetime]'2026-11-23 20:00'
+    Check 'check due: never checked' (Test-CPUpdateCheckDue -Config @{ AutoUpdateCheck = $true; LastUpdateCheck = '' } -Now $now)
+    Check 'check due: 13 hours ago' (Test-CPUpdateCheckDue -Config @{ AutoUpdateCheck = $true; LastUpdateCheck = '2026-11-23 07:00' } -Now $now)
+    Check 'not due: 1 hour ago' (-not (Test-CPUpdateCheckDue -Config @{ AutoUpdateCheck = $true; LastUpdateCheck = '2026-11-23 19:00' } -Now $now))
+    Check 'not due: turned off' (-not (Test-CPUpdateCheckDue -Config @{ AutoUpdateCheck = $false; LastUpdateCheck = '' } -Now $now))
+    Check 'new settings default to checking' ((Get-CPConfig (Join-Path $tmp 'upd.json')).AutoUpdateCheck -eq $true)
+
     if ($Online) {
         Write-Host "`n[11] Online lookups" -ForegroundColor Cyan
         $cf = Get-CPProblemMetadata 'https://codeforces.com/problemset/problem/4/A'
@@ -318,6 +341,13 @@ try {
         Check 'LeetCode two-sum -> 0001 Two Sum Easy' ($lcm.Ok -and $lcm.Name -eq 'Two Sum' -and $lcm.Id -eq '0001' -and $lcm.Difficulty -eq 'Easy') $lcm.Message
         $cs = Get-CPProblemMetadata 'https://cses.fi/problemset/task/1068'
         Check 'CSES 1068 -> Weird Algorithm' ($cs.Ok -and $cs.Name -eq 'Weird Algorithm') $cs.Message
+        $lr = $null; try { $lr = Get-CPLatestRelease } catch { Write-Host "    $($_.Exception.Message)" }
+        Check 'latest release found on GitHub' ($lr -and $lr.Version -and $lr.ZipUrl) "$($lr.Version) $($lr.ZipUrl)"
+        if ($lr -and $lr.ZipUrl) {
+            $inst = $null; try { $inst = Save-CPUpdatePackage -Release $lr } catch { Write-Host "    $($_.Exception.Message)" }
+            Check 'update package downloads and contains the installer' ($inst -and (Test-Path $inst)) "$inst"
+            if ($inst) { Remove-Item -LiteralPath (Split-Path (Split-Path (Split-Path $inst -Parent) -Parent) -Parent) -Recurse -Force -ErrorAction SilentlyContinue }
+        }
         $ac = Get-CPProblemMetadata 'https://atcoder.jp/contests/abc086/tasks/abc086_a'
         Check 'AtCoder abc086_a -> Product' ($ac.Ok -and $ac.Name -eq 'Product') "$($ac.Message) name='$($ac.Name)'"
     }

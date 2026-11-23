@@ -91,7 +91,7 @@ Size guide: Core ~1700 lines, Gui ~1600, Tray ~200, entry ~190, installer ~400, 
 ```
 
 * **Commands**: `open` (save window), `quick` (quick save), `browse` (solved problems),
-  `templates`, `settings`, `welcome` (tour), `tray` (just start), `exit`. Hotkeys map to
+  `templates`, `settings`, `welcome` (tour), `update` (check for updates now), `tray` (just start), `exit`. Hotkeys map to
   open / quick / browse.
 * **Named objects** (per Windows session; the prefix gets `_<CPSAVER_INSTANCE>` when that
   environment variable is set, so a test copy can run next to the real one):
@@ -147,7 +147,10 @@ defaults, so new keys get their default automatically):
 | `UpdateIndexes` | `true` | regenerate README stats + Index/*.md |
 | `QuickSaveNotify` | `'dialog'` | `'dialog'` (centered result window) or `'notification'` (balloon) |
 | `BackupsToKeep` | `30` | |
-| `TutorialShown` | `false` | the welcome tour was seen; the installer resets it on every interactive install |
+| `TutorialShown` | `false` | the welcome tour was seen; the installer resets it on every interactive install (not on `-Update`/`-Quiet`) |
+| `AutoUpdateCheck` | `true` | check GitHub for a newer release (asks before updating) |
+| `LastUpdateCheck` | `''` | `yyyy-MM-dd HH:mm` of the last automatic check |
+| `SkippedVersion` | `''` | set by *Skip this version* |
 | `TemplatePath` | | legacy (v2.0) |
 | `ConfigVersion` | `4` | bump + migrate in `Get-CPConfig` when a default must change for old users |
 
@@ -217,6 +220,7 @@ Exported: every `*-CP*` function. Sections in file order:
 | Quick save | `Invoke-CPQuickSave` (active practice file, settings' defaults, no questions; writes `last-quick-save.log`) |
 | Loading back | `Backup-CPPracticeFile`, `Get-CPImportTarget` (practice file of the same language), `Import-CPSolution` |
 | GitHub | `Get-CPGitHubToken` (`git credential fill`; never logged), `New-CPGitHubRepo`, `Connect-CPGitHub`, `Get-CPRepoWebUrl`, `Get-CPFileWebUrl` |
+| Updates | `Get-CPCurrentVersion`, `Compare-CPVersion`, `Get-CPLatestRelease` (GitHub API, no sign-in), `ConvertTo-CPReleaseInfo`, `Test-CPUpdateAvailable`, `Test-CPUpdateCheckDue`, `Save-CPUpdatePackage` (download + extract the release zip) |
 
 ## 8. The save pipeline step by step
 
@@ -264,7 +268,8 @@ Dot-sourced into the process (needs the Core module imported first). Contains:
 | `Show-CPWelcome` / `Start-CPFirstRun` | the welcome tour; first-run flow (tour once, then Settings if needed) |
 | `Show-CPGitIdentityDialog` / `Confirm-CPGitIdentity` | asks for git name + email before the first save |
 | `Use-CPRepoFolder` | turns an empty folder into a repo (asks for a non-empty one) |
-| `Show-CPResultDialog`, `Show-CPBusy`, `Show-CPNotification` | quick save result, "working..." box, balloon |
+| `Show-CPResultDialog`, `Show-CPBusy`, `Show-CPNotification` | quick save result, "working..." box, balloon (only if the user chose notifications for quick save) |
+| `Show-CPUpdateDialog`, `Start-CPUpdateInstaller` | "version X is available" window; starts the downloaded installer |
 
 * **State inside a window**: a `$ui` hashtable (controls) and a `$st` hashtable (state) captured
   by the event handlers. Event handlers are scriptblocks that run while `ShowDialog()` is active,
@@ -279,7 +284,17 @@ Dot-sourced into the process (needs the Core module imported first). Contains:
 2. Builds the `NotifyIcon` and its menu (`$addItem 'text' 'command'`).
 3. `$run` executes a command (see section 4); `$dispatch` wraps it with error handling.
 4. Timers: `$jobTimer` (150 ms) runs `Update-CPJobs`; `$startTimer` runs once after startup:
-   first run (tour + settings) if `TutorialShown` is false, then the start command.
+   first run (tour + settings) if `TutorialShown` is false, then the start command (no notification
+   is shown on start); `$updTimer` (first after 45 s, then every 10 min) starts an update check when
+   `Test-CPUpdateCheckDue` says 12 hours have passed.
+4b. **Updates**: `$checkUpdates` runs `Get-CPLatestRelease` as a job; a newer release goes to
+   `$tray.Pending` and `$offerUpdate` shows `Show-CPUpdateDialog` when no window is open
+   (*Update now* / *Later* / *Skip this version*). *Update now* runs `Save-CPUpdatePackage` as a job
+   (busy box), then `Start-CPUpdateInstaller` starts `app\install.ps1 -Gui -Update` from the
+   download, without the `CPSAVER_*` test variables; the installer stops this host, updates the
+   files and starts the tray again. The manual menu item (`update` command) also reports
+   "You have the latest version" or errors. Release notes come from the GitHub release body
+   (the changelog section that `New-Release.ps1` writes).
 5. `Application.Run()` until `exit`.
 
 `CPSaverNative.cs`: `Dpi.Enable()` (sharp text on scaled screens), `HostWindow` (a hidden
@@ -311,7 +326,9 @@ starts `app\setup.vbs`, which runs `install.ps1 -Gui` with no console window (a 
 inside try/catch; `Step` / `Ok` / `Warn` report either to the console or to the progress window
 (`$script:Ui`) and always to `%TEMP%\CPSolutionSaver-install.log`. With `-Gui`:
 `Show-InstallWelcome` (options) -> `Show-InstallProgress` (not modal, updated by the steps) ->
-`Show-InstallDone` (or the error) -> start the app. Steps: requirements; stop a running host
+`Show-InstallDone` (or the error) -> start the app. `-Update` (from the app's *Update now*) skips the
+first page, keeps the current Desktop/Startup shortcut choices, does not reset the tour and restarts
+the app in the tray. Steps: requirements; stop a running host
 (event + kill leftover `CPSaver.ps1 -Tray` processes; locked DLLs are renamed); copy; compile the
 native helpers; shortcuts; settings (merge, templates, `TutorialShown = false` unless `-Quiet`);
 remove old .bat launchers; start the app (`CPSaverLauncher.exe open` -> tour -> Settings if
@@ -341,7 +358,9 @@ records a result. Sections:
 9 browse + load back, 10 languages / link identity / dates / templates / settings,
 13 local-only repo (`git init`, no remote), 14 first-time setup helpers (empty folder, connect
 to GitHub later, git identity, old launchers, tour flag), 11 online lookups (`-Online`),
-12 static checks (every window button has a click handler; every script parses).
+15 updates (version compare, release parsing, skip, check interval), 12 static checks (every window
+button has a click handler; every script parses). `-Online` also fetches the real latest release and
+downloads its zip.
 
 GUI windows are not driven by the tests; check them by hand (section 16 has a safe way).
 
@@ -416,6 +435,8 @@ commit and push, then `powershell -ExecutionPolicy Bypass -File app\tools\New-Re
   Commands then go to it with the same variables set (`CPSaverLauncher.exe browse`, `... exit`).
   Add `set GIT_CONFIG_GLOBAL=%TEMP%\cpsaver-dev\empty.gitconfig` to see the app as a user whose
   git has no name/email yet.
+* **Test the update flow**: set `CPSAVER_CURRENT_VERSION=1.0.0` for a test copy (see above) and run
+  `CPSaverLauncher.exe update`: it offers the latest release. *Update now* really updates the installed app.
 * **Restart the tray** after changing installed files: `CPSaverLauncher.exe exit`, then `tray`
   (the installer does this for you).
 * **Try Core functions in a console**:

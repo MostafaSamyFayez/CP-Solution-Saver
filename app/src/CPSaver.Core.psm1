@@ -12,7 +12,7 @@
 # ----------------------------------------------------------------------------
 
 $script:AppName    = 'CPSolutionSaver'
-$script:AppVersion = '2.5.0'
+$script:AppVersion = '2.6.0'
 
 function Get-CPAppVersion { $script:AppVersion }
 
@@ -46,6 +46,9 @@ function Get-CPDefaultConfig {
         QuickSaveNotify  = 'dialog'  # 'dialog' (message box in the middle of the screen) or 'notification'
         BackupsToKeep    = 30
         TutorialShown    = $false    # the welcome tour is shown once, on first run
+        AutoUpdateCheck  = $true     # look for a newer release on GitHub now and then (asks before updating)
+        LastUpdateCheck  = ''        # 'yyyy-MM-dd HH:mm' of the last automatic check
+        SkippedVersion   = ''        # "Skip this version" in the update window
         ConfigVersion    = 4
     }
 }
@@ -1706,6 +1709,96 @@ function Get-CPRepoWebUrl {
     if ($u -notmatch '^https?://') { return $null }          # a local folder remote has no web page
     $u = $u -replace '^(https?://)[^/@]+@', '$1'             # drop a user name in the URL
     return $u
+}
+
+# ----------------------------------------------------------------------------
+#  Updates (GitHub releases of the app itself)
+# ----------------------------------------------------------------------------
+#  The tray app calls Test-CPUpdateCheckDue now and then, Get-CPLatestRelease in the background,
+#  and asks the user (Show-CPUpdateDialog) when Test-CPUpdateAvailable is true. "Update now" runs
+#  Save-CPUpdatePackage (download + extract) and starts the new installer with -Gui -Update.
+
+$script:UpdateRepo = 'MostafaSamyFayez/CP-Solution-Saver'
+$script:UpdateAsset = 'CP-Solution-Saver.zip'
+
+function Get-CPCurrentVersion {
+    <# The installed version. CPSAVER_CURRENT_VERSION pretends an older one (to test updates). #>
+    if ($env:CPSAVER_CURRENT_VERSION) { return $env:CPSAVER_CURRENT_VERSION }
+    return (Get-CPAppVersion)
+}
+
+function Compare-CPVersion {
+    <# -1 / 0 / 1 like a comparer: 2.10.0 > 2.9.1; a leading "v" is ignored; missing parts count as 0. #>
+    param([string]$A, [string]$B)
+    $pa = @(([string]$A).Trim().TrimStart('v', 'V') -split '[.\-+]' | Select-Object -First 4 | ForEach-Object { $n = 0; [void][int]::TryParse($_, [ref]$n); $n })
+    $pb = @(([string]$B).Trim().TrimStart('v', 'V') -split '[.\-+]' | Select-Object -First 4 | ForEach-Object { $n = 0; [void][int]::TryParse($_, [ref]$n); $n })
+    for ($i = 0; $i -lt 4; $i++) {
+        $x = if ($i -lt $pa.Count) { $pa[$i] } else { 0 }
+        $y = if ($i -lt $pb.Count) { $pb[$i] } else { 0 }
+        if ($x -gt $y) { return 1 }
+        if ($x -lt $y) { return -1 }
+    }
+    return 0
+}
+
+function ConvertTo-CPReleaseInfo {
+    <# A GitHub "release" object -> @{ Version; Notes; Page; ZipUrl; Published } #>
+    param([Parameter(Mandatory)]$Release)
+    $asset = @($Release.assets) | Where-Object { $_ -and $_.name -eq $script:UpdateAsset } | Select-Object -First 1
+    return @{
+        Version   = ([string]$Release.tag_name).Trim().TrimStart('v', 'V')
+        Notes     = [string]$Release.body
+        Page      = [string]$Release.html_url
+        ZipUrl    = $(if ($asset) { [string]$asset.browser_download_url } else { '' })
+        Published = [string]$Release.published_at
+    }
+}
+
+function Get-CPLatestRelease {
+    <# The newest published release of the app on GitHub (no sign-in needed). Throws on network errors. #>
+    param([int]$TimeoutSec = 15)
+    Initialize-CPWeb
+    $r = Invoke-RestMethod -Uri "https://api.github.com/repos/$($script:UpdateRepo)/releases/latest" -TimeoutSec $TimeoutSec `
+        -Headers @{ 'User-Agent' = 'CPSolutionSaver'; Accept = 'application/vnd.github+json' }
+    return (ConvertTo-CPReleaseInfo $r)
+}
+
+function Test-CPUpdateAvailable {
+    <# $true when the release is newer than this version, has the zip, and was not skipped by the user. #>
+    param([Parameter(Mandatory)][hashtable]$Release, [string]$SkippedVersion = '', [switch]$IgnoreSkipped)
+    if (-not $Release.ZipUrl) { return $false }
+    if ((Compare-CPVersion $Release.Version (Get-CPCurrentVersion)) -le 0) { return $false }
+    if (-not $IgnoreSkipped -and $SkippedVersion -and (Compare-CPVersion $Release.Version $SkippedVersion) -eq 0) { return $false }
+    return $true
+}
+
+function Test-CPUpdateCheckDue {
+    <# Automatic checks: on, and the last one was at least -Hours ago. #>
+    param([Parameter(Mandatory)]$Config, [int]$Hours = 12, [datetime]$Now = (Get-Date))
+    if (-not $Config.AutoUpdateCheck) { return $false }
+    $last = [datetime]::MinValue
+    if (-not [datetime]::TryParseExact([string]$Config.LastUpdateCheck, 'yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture, 'None', [ref]$last)) { return $true }
+    return (($Now - $last).TotalHours -ge $Hours)
+}
+
+function Save-CPUpdatePackage {
+    <# Downloads the release zip to %TEMP% and extracts it. Returns the new installer (app\install.ps1). #>
+    param([Parameter(Mandatory)][hashtable]$Release)
+    if (-not $Release.ZipUrl) { throw 'This release has no download.' }
+    Initialize-CPWeb
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ("cpsaver-update-" + $Release.Version)
+    if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $zip = Join-Path $dir $script:UpdateAsset
+    $old = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'   # the progress bar makes downloads very slow in PS 5.1
+    try { Invoke-WebRequest -Uri $Release.ZipUrl -OutFile $zip -UseBasicParsing -TimeoutSec 120 -Headers @{ 'User-Agent' = 'CPSolutionSaver' } }
+    finally { $ProgressPreference = $old }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $dir)
+    $installer = Get-ChildItem -LiteralPath $dir -Recurse -Filter 'install.ps1' | Where-Object { $_.Directory.Name -eq 'app' } | Select-Object -First 1
+    if (-not $installer) { throw 'The downloaded update does not contain the installer.' }
+    Get-ChildItem -LiteralPath $dir -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
+    return $installer.FullName
 }
 
 Export-ModuleMember -Function *-CP*, Get-CPAppVersion

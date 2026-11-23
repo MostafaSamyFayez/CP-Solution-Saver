@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.6.0 - 2026-11-23
+
+### Updates itself
+- The app checks GitHub for a newer version (45 seconds after it starts, then every 12 hours) and
+  **asks** before updating: *Update now* / *Later* / *Skip this version*, with the release notes.
+- *Update now* downloads the new version and runs the setup in update mode: no questions, your
+  shortcut choices, settings, templates and solutions are kept, no tour, the app restarts in the tray.
+- Tray menu > **Check for updates...** checks right away; Settings has *Check for new versions
+  automatically* (on by default).
+
+### Quieter
+- No Windows notifications when the app starts or after installing. (Quick save still uses one only
+  if you chose notifications instead of the result window in Settings.)
+
 ## 2.5.0 - 2026-11-23
 
 ### Setup window

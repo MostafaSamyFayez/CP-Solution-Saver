@@ -18,6 +18,7 @@
     Install.bat                      # the window (normal use)
     Install.bat -Console             # same, in the console
     Install.bat -Quiet               # console, no questions, no tour, app restarted in the tray (updates/scripts)
+    install.ps1 -Gui -Update         # what the app's "Update now" runs (from the downloaded release)
     .\install.ps1 -MainCpp "C:\...\main.cpp" -RepoPath "C:\Users\me\Desktop\Problem-Solving-Solutions"
     .\install.ps1 -PracticeFile "C:\...\main.cpp", "C:\...\main.py"      # one practice file per language
 #>
@@ -31,7 +32,9 @@ param(
     [switch]$NoStartup,
     [switch]$Quiet,                # no questions, no tour, keep the app in the tray (used for updates and tests)
     [switch]$Gui,                  # the installer window (Install.bat)
-    [switch]$Console               # accepted for Install.bat -Console (console output, same as no -Gui)
+    [switch]$Console,              # accepted for Install.bat -Console (console output, same as no -Gui)
+    [switch]$Update                # started by the app's "Update now": no first page, keep the shortcut choices,
+                                   # no tour, restart the app in the tray
 )
 
 $ErrorActionPreference = 'Stop'
@@ -122,7 +125,7 @@ function Show-InstallProgress {
     <# The progress window (not modal; the install steps update it). #>
     $f = New-CPForm 'CP Solution Saver Setup' 560 230
     $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.MinimizeBox = $true; $f.BackColor = [System.Drawing.Color]::White
-    $hdr = New-CPHeader 'Installing CP Solution Saver' "Version $(Get-CPAppVersion)"; $hdr.Right.Visible = $false
+    $hdr = New-CPHeader $(if ($Update) { 'Updating CP Solution Saver' } else { 'Installing CP Solution Saver' }) "Version $(Get-CPAppVersion)"; $hdr.Right.Visible = $false
     $p = New-Object System.Windows.Forms.Panel; $p.Dock = 'Fill'; $p.Padding = New-Object System.Windows.Forms.Padding(22, 16, 22, 10)
     $step = New-Object System.Windows.Forms.Label; $step.Font = $script:CPFontBold; $step.AutoSize = $false; $step.Dock = 'Top'; $step.Height = 26; $step.Text = 'Starting...'
     $bar = New-Object System.Windows.Forms.ProgressBar; $bar.Dock = 'Top'; $bar.Height = 16; $bar.Maximum = 6; $bar.Value = 0
@@ -142,14 +145,15 @@ function Show-InstallDone {
     $f = New-CPForm 'CP Solution Saver Setup' 600 200
     $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.BackColor = [System.Drawing.Color]::White
     $f.AutoSize = $true; $f.AutoSizeMode = 'GrowOnly'
-    $hdr = New-CPHeader $(if ($Failed) { 'Setup could not finish' } else { 'CP Solution Saver is installed' }) "Version $(Get-CPAppVersion)"; $hdr.Right.Visible = $false
+    $hdr = New-CPHeader $(if ($Failed) { 'Setup could not finish' } elseif ($Update) { 'CP Solution Saver is updated' } else { 'CP Solution Saver is installed' }) "Version $(Get-CPAppVersion)"; $hdr.Right.Visible = $false
     $g = New-Object System.Windows.Forms.TableLayoutPanel; $g.Dock = 'Fill'; $g.ColumnCount = 1; $g.AutoSize = $true
     $g.Padding = New-Object System.Windows.Forms.Padding(22, 16, 22, 10)
     if ($Failed) {
         $g.Controls.Add((New-InstallText $Message $script:CPRed))
         $g.Controls.Add((New-InstallText "Details are in the install log:`r`n$($script:InstallLog)" $script:CPMuted))
     } else {
-        $g.Controls.Add((New-InstallText 'Click Finish to open it. A short tour shows you how to use it, then you choose your practice file and solutions folder (only the first time).' $script:CPAccent))
+        if ($Update) { $g.Controls.Add((New-InstallText "Updated to version $(Get-CPAppVersion). Click Finish to start it again (it runs in the tray). What changed: see the release page or CHANGELOG.md." $script:CPAccent)) }
+        else { $g.Controls.Add((New-InstallText 'Click Finish to open it. A short tour shows you how to use it, then you choose your practice file and solutions folder (only the first time).' $script:CPAccent)) }
         $g.Controls.Add((New-InstallText "Ctrl+Alt+Shift+S   save window`r`nCtrl+Alt+Shift+F   quick save`r`nCtrl+Alt+Shift+B   solved problems" $script:CPAccent $script:CPFontBold))
         $g.Controls.Add((New-InstallText 'It lives in the tray, next to the clock (right-click the icon for everything). You can delete the downloaded folder now.' $script:CPMuted))
         foreach ($w in $script:Warnings) { $g.Controls.Add((New-InstallText $w $script:CPOrange)) }
@@ -167,10 +171,16 @@ function Show-InstallDone {
 }
 
 if ($Gui) {
-    $opts = Show-InstallWelcome
-    if (-not $opts) { exit 0 }
-    $NoDesktopShortcut = -not $opts.Desktop
-    $NoStartup = -not $opts.Startup
+    if ($Update) {
+        # keep what the user has now
+        $NoDesktopShortcut = -not (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Desktop')) 'CP Solution Saver.lnk'))
+        $NoStartup = -not (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Startup')) 'CP Solution Saver.lnk'))
+    } else {
+        $opts = Show-InstallWelcome
+        if (-not $opts) { exit 0 }
+        $NoDesktopShortcut = -not $opts.Desktop
+        $NoStartup = -not $opts.Startup
+    }
     $script:Ui = Show-InstallProgress
 } else {
     Write-Host "`nCP Solution Saver - installer`n" -ForegroundColor White
@@ -345,7 +355,7 @@ sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidd
     }
     $tplDir = Initialize-CPTemplates
     # every interactive install shows the welcome tour again (updates with -Quiet don't)
-    if (-not $Quiet) { $cfg.TutorialShown = $false }
+    if (-not $Quiet -and -not $Update) { $cfg.TutorialShown = $false }
     Save-CPConfig -Config $cfg -Path $cfgPath
     Ok "Settings file: $cfgPath"
     Ok "Templates    : $tplDir ($(@(Get-CPTemplates).Count) templates)"
@@ -374,8 +384,8 @@ sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidd
     #    the welcome tour, Settings if needed, then the save window.
     Step 'Starting CP Solution Saver'
     $script:StartApp = {
-        if ($nativeOk) { Start-Process -FilePath $launcherExe -ArgumentList $(if ($Quiet) { 'tray' } else { 'open' }) }
-        elseif (-not $Quiet) { Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\wscript.exe') -ArgumentList "`"$(Join-Path $InstallDir 'CPSaver.vbs')`"" }
+        if ($nativeOk) { Start-Process -FilePath $launcherExe -ArgumentList $(if ($Quiet -or $Update) { 'tray' } else { 'open' }) }
+        elseif (-not $Quiet -and -not $Update) { Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\wscript.exe') -ArgumentList "`"$(Join-Path $InstallDir 'CPSaver.vbs')`"" }
     }
     Ok 'Done.'
 }

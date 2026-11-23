@@ -499,6 +499,67 @@ function Start-CPFirstRun {
     return (@(Test-CPConfig $Config).Count -eq 0)
 }
 
+# ============================================================================
+#  Updates (asks before updating; the tray app checks now and then)
+# ============================================================================
+function Show-CPUpdateDialog {
+    <# "Version X is available". Returns 'update', 'later' or 'skip'. #>
+    param([Parameter(Mandatory)][hashtable]$Release)
+    $f = New-CPForm 'CP Solution Saver - Update available' 620 200
+    $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.MinimizeBox = $false; $f.TopMost = $true
+    $f.BackColor = [System.Drawing.Color]::White; $f.AutoSize = $true; $f.AutoSizeMode = 'GrowOnly'
+    $hdr = New-CPHeader "Version $($Release.Version) is available" "You have version $(Get-CPCurrentVersion)"; $hdr.Right.Visible = $false
+    $g = New-Object System.Windows.Forms.TableLayoutPanel; $g.Dock = 'Fill'; $g.ColumnCount = 1; $g.AutoSize = $true
+    $g.Padding = New-Object System.Windows.Forms.Padding(20, 14, 20, 10)
+    $intro = New-CPLabel 'A newer version of CP Solution Saver is ready. Updating takes a few seconds; your settings, templates and solutions are kept.'
+    $intro.MaximumSize = New-Object System.Drawing.Size(560, 0)
+    $g.Controls.Add($intro)
+    $wl = New-CPLabel "What's new:" $script:CPFontBold; $wl.Margin = New-Object System.Windows.Forms.Padding(3, 10, 3, 2)
+    $g.Controls.Add($wl)
+    $notes = New-Object System.Windows.Forms.TextBox; $notes.Multiline = $true; $notes.ReadOnly = $true; $notes.ScrollBars = 'Vertical'
+    $notes.Font = $script:CPFontSmall; $notes.BackColor = $script:CPBg; $notes.BorderStyle = 'FixedSingle'
+    $notes.Width = 560; $notes.Height = 180; $notes.TabStop = $false
+    $txt = ($Release.Notes -replace '\r?\n', "`r`n" -replace '\*\*', '')
+    if ($txt.Length -gt 4000) { $txt = $txt.Substring(0, 4000) + "`r`n..." }
+    $notes.Text = $(if ($txt.Trim()) { $txt } else { '(no notes)' })
+    $g.Controls.Add($notes)
+    $more = New-Object System.Windows.Forms.LinkLabel; $more.Text = 'Open the release page'; $more.AutoSize = $true; $more.Font = $script:CPFontSmall
+    $more.Margin = New-Object System.Windows.Forms.Padding(3, 4, 3, 0)
+    $pageUrl = $Release.Page
+    $more.Add_LinkClicked({ if ($pageUrl) { Start-Process $pageUrl } }.GetNewClosure())
+    $g.Controls.Add($more)
+    $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.FlowDirection = 'RightToLeft'; $btns.AutoSize = $true; $btns.Dock = 'Fill'
+    $btns.Margin = New-Object System.Windows.Forms.Padding(0, 12, 0, 0)
+    $res = @{ Value = 'later' }
+    $up = New-CPButton 'Update now' 120; Set-CPPrimary $up
+    $later = New-CPButton 'Later' 90
+    $skip = New-CPButton 'Skip this version'
+    $btns.Controls.Add($up); $btns.Controls.Add($later); $btns.Controls.Add($skip)
+    $up.Add_Click({ $res.Value = 'update'; $f.Close() })
+    $later.Add_Click({ $res.Value = 'later'; $f.Close() })
+    $skip.Add_Click({ $res.Value = 'skip'; $f.Close() })
+    $g.Controls.Add($btns)
+    $f.Controls.Add($g); $f.Controls.Add($hdr.Panel)
+    $f.AcceptButton = $up; $f.CancelButton = $later
+    $f.Add_Shown({ Show-CPForeground $f; $up.Focus() })
+    [void]$f.ShowDialog(); $f.Dispose()
+    return $res.Value
+}
+
+function Start-CPUpdateInstaller {
+    <# Starts the downloaded installer (setup window in update mode). It stops this app, updates it
+       and starts it again. The test variables (CPSAVER_*) are not passed on. #>
+    param([Parameter(Mandatory)][string]$InstallerPath)
+    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $psi = New-Object System.Diagnostics.ProcessStartInfo($ps, "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$InstallerPath`" -Gui -Update")
+    $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+    $psi.WorkingDirectory = Split-Path $InstallerPath -Parent
+    foreach ($k in @('CPSAVER_INSTANCE', 'CPSAVER_DATA_DIR', 'CPSAVER_CONFIG', 'CPSAVER_CURRENT_VERSION')) {
+        if ($psi.EnvironmentVariables.ContainsKey($k)) { $psi.EnvironmentVariables.Remove($k) }
+    }
+    [void][System.Diagnostics.Process]::Start($psi)
+}
+
 function New-CPTextBox([switch]$Multiline) {
     $t = New-Object System.Windows.Forms.TextBox
     $t.Font = $script:CPFont
@@ -744,6 +805,7 @@ function Show-CPSettingsDialog {
     $cClose = & $mk 'Close the save window after a successful save' $Config.CloseAfterSave
     $cDlg   = & $mk 'Quick save (Ctrl+Alt+Shift+F): show a Windows notification instead of the result window' ($Config.QuickSaveNotify -eq 'notification')
     $cStart = & $mk 'Start with Windows (keeps the shortcuts instant; runs quietly in the tray)' (Test-CPStartWithWindows)
+    $cUpd   = & $mk 'Check for new versions automatically (asks before updating)' $Config.AutoUpdateCheck
     if (-not (Test-Path -LiteralPath (Get-CPLauncherPath))) { $cStart.Enabled = $false }
     $grid.Controls.Add($opts, 0, $row); $grid.SetColumnSpan($opts, 3); $row++
 
@@ -776,6 +838,7 @@ function Show-CPSettingsDialog {
         $Config.ResetAfterSave = $cReset.Checked; $Config.UpdateIndexes = $cIdx.Checked
         $Config.QuickSaveNotify = $(if ($cDlg.Checked) { 'notification' } else { 'dialog' })
         $Config.CloseAfterSave = $cClose.Checked
+        $Config.AutoUpdateCheck = $cUpd.Checked
         if ($cStart.Enabled) { try { Set-CPStartWithWindows $cStart.Checked } catch { } }
         if ($Config.RepoPath -and (Test-CPRepoFolder $Config.RepoPath) -ne 'repo') {
             try { $use = Use-CPRepoFolder $Config.RepoPath; if ($use) { $Config.RepoPath = $use; $repoBox.Text = $use } } catch { }

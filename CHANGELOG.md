@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.2.0 - 2026-11-23
+
+### Added
+- **Several languages**: one practice file per language (`main.cpp`, `main.c`, `main.py` ...);
+  the most recently saved one is used, or pick it in the window. Python docstring headers and
+  `//` / `#` comment headers are understood; saved files keep their extension.
+- **Code templates**: 11 built-in templates (C++: Basic, Multiple test cases, Competitive,
+  Graph, Number theory, DSU + Fenwick; C: 2; Python: 3) plus your own files in
+  `%APPDATA%\CPSolutionSaver\templates`. Templates window: preview, load into the practice
+  file (with backup), choose the template "reset after saving" uses per language.
+- Window shows whether the problem is new, solved before (and when) or solved before in
+  another language. Solved problems browser: Language column and filter.
+
+### Changed
+- **The problem link is required** and identifies the problem; different spellings of the same
+  link (Codeforces contest vs problemset, LeetCode `/description`, query strings, `www`,
+  trailing `/`) are recognized as the same problem.
+- **Reset the practice file after a successful save is on by default** (can be turned off);
+  quick save also resets after "already saved".
+- **Quick save shows a message box in the middle of the screen** by default (Windows
+  notification is an option). Existing settings are migrated to both new defaults.
+
+### Fixed
+- Saving the same problem again no longer counts as a new submission because of the date:
+  the original *Date Solved* and link spelling are kept, so identical code gives
+  "Already saved - nothing new to push".
+
+
 ## 2.1.0 - 2026-11-23
 
 ### Added

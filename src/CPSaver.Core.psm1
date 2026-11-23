@@ -945,14 +945,14 @@ function Save-CPSolution {
             $rel = $existing
             $result.IsUpdate = $true
             & $emit "Already saved before; updating $rel"
-            # keep the date it was first solved (unless you wrote a date in the header yourself),
-            # so re-saving the same code on another day is not a change
-            if ($Info.DateAuto) {
-                try {
-                    $old = Read-CPHeader (Read-CPTextFile (Join-Path $RepoPath $existing))
-                    if ($old.Fields.Contains('Date Solved') -and $old.Fields['Date Solved']) { $Info.DateSolved = [string]$old.Fields['Date Solved'] }
-                } catch { }
-            }
+            # Same problem saved before: keep the date it was first solved (unless you wrote a
+            # date in the header yourself) and the link as it was first written, so re-saving
+            # the same code - on another day, or with another spelling of the link - is not a change
+            try {
+                $old = Read-CPHeader (Read-CPTextFile (Join-Path $RepoPath $existing))
+                if ($Info.DateAuto -and $old.Fields.Contains('Date Solved') -and $old.Fields['Date Solved']) { $Info.DateSolved = [string]$old.Fields['Date Solved'] }
+                if ($old.Fields.Contains('Problem Link') -and $old.Fields['Problem Link'] -and (Get-CPProblemKey $old.Fields['Problem Link']) -eq (Get-CPProblemKey $Info.Link)) { $Info.Link = [string]$old.Fields['Problem Link'] }
+            } catch { }
         }
     } else {
         $other = @(Find-CPSolvedBefore -RepoPath $RepoPath -Info $Info)

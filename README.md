@@ -1,16 +1,17 @@
 # CP Solution Saver
 
-Save an accepted competitive-programming solution from your practice `main.cpp`
-to your GitHub solutions repo **with one click**: it gets a clean file name, the
+Save an accepted competitive-programming solution from your practice file
+(`main.cpp`, `main.c` or `main.py`) to your GitHub solutions repo **with one click**: it gets a clean file name, the
 right folder, a complete header (name, link, difficulty, topics, date), and it
 is listed in auto-generated indexes **by platform, by topic and by difficulty**.
 
 Two ways to save: the **window** (check and edit everything first) or **quick save**
-(one hotkey, no window, a notification tells you what happened). And when you want to
-study an old problem, **search your solved problems** and load one back into `main.cpp`.
+(one hotkey, no window, a message box tells you what happened). After saving, your practice
+file is reset to a **code template** for the next problem. When you want to study an old
+problem, **search your solved problems** and load one back.
 
-Made for a Visual Studio C++ practice project on Windows. No admin rights, no
-extra software besides Git.
+Made for a Visual Studio practice project on Windows (any editor works: the app only needs the
+file). C++, C and Python. No admin rights, no extra software besides Git.
 
 ![Main window](docs/screenshot-main.png)
 
@@ -23,35 +24,42 @@ extra software besides Git.
 3. [Daily use](#daily-use)
 4. [Quick save (no window)](#quick-save-no-window)
 5. [Solved problems: search and load back](#solved-problems-search-and-load-back)
-6. [The problem header](#the-problem-header)
-7. [How the solutions repo is organized](#how-the-solutions-repo-is-organized)
-8. [Settings](#settings)
-9. [Visual Studio button (optional)](#visual-studio-button-optional)
-10. [Console mode](#console-mode)
-11. [Testing](#testing)
-12. [Uninstall](#uninstall)
-13. [Troubleshooting](#troubleshooting)
-14. [Project layout](#project-layout)
+6. [Several languages (C++, C, Python)](#several-languages-c-c-python)
+7. [Code templates](#code-templates)
+8. [The problem header](#the-problem-header)
+9. [Same problem again: how it is recognized](#same-problem-again-how-it-is-recognized)
+10. [How the solutions repo is organized](#how-the-solutions-repo-is-organized)
+11. [Settings](#settings)
+12. [Visual Studio button (optional)](#visual-studio-button-optional)
+13. [Console mode](#console-mode)
+14. [Testing](#testing)
+15. [Uninstall](#uninstall)
+16. [Troubleshooting](#troubleshooting)
+17. [Project layout](#project-layout)
 
 ---
 
 ## What it does
 
-- **Reads the header** at the top of your `main.cpp` (problem name, link, difficulty, topics, notes).
+- **Reads the header** at the top of your practice file (problem name, **link (required)**, difficulty, topics, notes).
 - **Looks the problem up online** from the link, filling in what you left empty:
   - Codeforces: name, rating, tags
   - LeetCode: name, number, Easy/Medium/Hard, topic tags
   - AtCoder, CSES and others: name
 - **Saves** the code into your solutions repo, e.g. `Codeforces/4A_Watermelon.cpp`,
   with a normalized header including the date solved.
-- **Never duplicates**: saving the same problem again (same link) updates the existing
-  file. You can also choose to keep both (`_v2`).
+- **Never duplicates**: the problem link identifies the problem, so saving it again updates the
+  existing file (even if the link is written differently), and it keeps the original solve date.
+  You can also choose to keep both (`_v2`).
 - **Updates the indexes**: README progress section, `Index/BY_PLATFORM.md`,
   `Index/BY_TOPIC.md`, `Index/BY_DIFFICULTY.md`.
 - **Commits and pushes** (`git pull --rebase` first, so pushes don't get rejected),
   with messages like `Add Codeforces 4A - Watermelon` and the topics/difficulty in the body.
-- Optionally **resets `main.cpp`** to your template for the next problem.
-- **Quick save**: `Ctrl+Alt+Shift+F` does all of the above with no window and shows a notification with the result.
+- **Resets the practice file** to a code template for the next problem (on by default, can be turned off).
+- **Quick save**: `Ctrl+Alt+Shift+F` does all of the above with no window and shows the result in a message box.
+- **Several languages**: C++, C, Python (and Java/JS/C#/Go/Rust/Kotlin files are understood too).
+- **Code templates**: 11 built-in templates (basic, multiple tests, competitive, graph, number theory,
+  DSU/Fenwick, C, Python), plus your own; pick which one "reset" uses per language.
 - **Solved problems browser**: search by name, filter by platform / topic / difficulty, preview the code,
   and load a solution back into `main.cpp` (your current file is backed up first).
 
@@ -64,7 +72,8 @@ Requirements: Windows 10/11 and [Git for Windows](https://git-scm.com/download/w
    (or *Code → Download ZIP* and unzip).
 2. Double-click **`install.bat`**.
 3. If it can't find your settings yet, the **Settings** window opens. Choose:
-   - **Practice file**: the `main.cpp` you solve problems in.
+   - **Practice files**: the file you solve problems in, one per language (`main.cpp`, and if you
+     like `main.c`, `main.py`).
    - **Solutions repo folder**: your local clone of the solutions repo.
      No repo yet? Click **Create a new GitHub repo...** (uses Git's existing GitHub sign-in)
      or **Clone a GitHub repo...**.
@@ -74,7 +83,7 @@ The installer:
 | What | Where |
 |---|---|
 | App files | `%LOCALAPPDATA%\Programs\CPSolutionSaver` |
-| Settings + template | `%APPDATA%\CPSolutionSaver\config.json`, `template.cpp` |
+| Settings, templates, backups | `%APPDATA%\CPSolutionSaver\` (`config.json`, `templates\`, `backups\`) |
 | Start Menu | *CP Solution Saver* folder (app, Settings, Read me, Uninstall) |
 | Desktop | *CP Solution Saver* shortcut |
 | Hotkeys | **Ctrl+Alt+Shift+S** opens the app, **Ctrl+Alt+Shift+F** quick save (no window) |
@@ -85,46 +94,48 @@ You can also install non-interactively:
 
 ```powershell
 .\install.ps1 -MainCpp "C:\path\to\main.cpp" -RepoPath "C:\Users\me\Desktop\Problem-Solving-Solutions"
+.\install.ps1 -PracticeFile "C:\path\to\main.cpp", "C:\path\to\main.py"     # several languages
 ```
 
 Updating = `git pull` in this repo and run `install.bat` again (your settings are kept).
 
 ## Daily use
 
-1. Solve the problem in `main.cpp`. Fill at least the **link** in the header
-   (the name, difficulty and topics are fetched for Codeforces/LeetCode).
-2. Submit. When it's **Accepted**, press **Ctrl+S** in Visual Studio to save the file.
+1. Solve the problem in your practice file. Fill at least the **link** in the header (required;
+   the name, difficulty and topics are fetched for Codeforces/LeetCode).
+2. Submit. When it's **Accepted**, save the file (**Ctrl+S** in Visual Studio).
 3. Press **Ctrl+Alt+Shift+S** (or double-click `save_solution.bat`, or the Desktop shortcut).
 4. Check the fields, add topics with **Pick...** if you like, then **Save & Push** (or Ctrl+S in the app).
-5. Done: the status line says *"... is on GitHub"*.
+5. Done: the status line says *"... is on GitHub"*, and the practice file is reset to its template.
 
-Window shortcuts: **Ctrl+S** save & push, **F5** reload `main.cpp`, **Esc** close.
+The *Will be saved as* line tells you whether the problem is **new**, **solved before** (and when;
+it will be updated) or solved before **in another language**.
 
-If `main.cpp` changed after the window opened, it tells you; the newest code on disk is always what gets saved.
+Window shortcuts: **Ctrl+S** save & push, **F5** reload, **Esc** close.
+
+If the file changed after the window opened, it tells you; the newest code on disk is always what gets saved.
 
 ## Quick save (no window)
 
 When the header is already right, skip the window:
 
-1. Save `main.cpp` in Visual Studio (Ctrl+S).
+1. Save your practice file (Ctrl+S).
 2. Press **Ctrl+Alt+Shift+F** (or double-click `quick_save.bat`, or Start Menu > *CP Solution Saver - Quick Save*).
-3. A Windows notification shows the result, for example:
+3. A message box in the middle of the screen shows the result, for example:
 
    ![Quick save result](docs/screenshot-quicksave.png)
 
-   *Saved: Way Too Long Words* · `Codeforces/71A_Way_Too_Long_Words.cpp (new)` · `Difficulty 800 | strings` · `Pushed to GitHub.`
+Quick save uses the practice file you saved most recently, and exactly the same steps as the
+window (header + online lookup, duplicate check, indexes, pull/commit/push, reset to template)
+with your Settings defaults, and asks nothing. Other results:
 
-Quick save uses exactly the same steps as the window (header + online lookup, duplicate check,
-indexes, pull/commit/push) with your Settings defaults, and asks nothing. Other results:
-
-| Notification | Meaning |
+| Message | Meaning |
 |---|---|
 | *Already saved: ...* | This exact solution is already in the repo; nothing was pushed. |
-| *Quick save failed* (message box) | No problem name could be found, a push failed, etc. It explains why and offers to open the full window. |
+| *Quick save failed* | No problem link / name, a push failed, etc. It explains why and offers to open the full window. |
 
-Prefer a message box over a notification (e.g. Focus Assist hides notifications)? Settings >
-*Quick save: show a message box*. The full log of the last quick save is in
-`%APPDATA%\CPSolutionSaver\last-quick-save.log`.
+Prefer a Windows notification in the corner instead? Settings > *Quick save: show a Windows
+notification*. The full log of the last quick save is in `%APPDATA%\CPSolutionSaver\last-quick-save.log`.
 
 ## Solved problems: search and load back
 
@@ -134,19 +145,52 @@ Solved problems*, or `solved_problems.bat`.
 ![Solved problems browser](docs/screenshot-browser.png)
 
 - **Search** box: matches name, problem ID, platform, topics, notes, file name and link (several words = all must match). `Ctrl+F` jumps to it.
-- **Platform / Topic / Difficulty** filters (built from what you've solved); **Clear** resets them.
+- **Platform / Topic / Difficulty / Language** filters (built from what you've solved); **Clear** resets them.
 - Click a column header to sort (Difficulty sorts by rating, then Easy/Medium/Hard).
 - The lower half previews the selected solution.
-- **Load into main.cpp** (or double-click / Enter): asks first, **backs up your current `main.cpp`**
+- **Load into practice file** (or double-click / Enter): asks first, **backs up your current file**
   to `%APPDATA%\CPSolutionSaver\backups` (the newest 30 are kept; **Backups** button opens the folder),
-  then puts the solution into `main.cpp`. Visual Studio asks to reload the file: choose **Yes**.
+  then puts the solution into the practice file **of its language** (`.py` solutions go into `main.py`).
+  Visual Studio asks to reload the file: choose **Yes**.
 - **Open problem page** / **Open file** for the selected problem.
 
 A loaded solution keeps its header, so if you improve it and save again it **updates the same file**.
 
+## Several languages (C++, C, Python)
+
+Add one practice file per language in **Settings > Practice files** (for example `main.cpp`,
+`main.c`, `main.py`). The app always works on the one **you saved most recently**, and you can
+switch with the *Practice file* dropdown at the top of the window.
+
+- The saved file keeps its language: `Codeforces/4A_Watermelon.py`, `CSES/1083_Missing_Number.c`.
+- The same problem solved in two languages gives two files side by side; the window says
+  *solved before in C++* so you know.
+- Each language has its own reset template.
+- Solved problems can be filtered by language, and load back into the matching practice file.
+
+## Code templates
+
+![Code templates](docs/screenshot-templates.png)
+
+Open **Templates...** in the window (or in Settings). Built in:
+
+| Language | Templates |
+|---|---|
+| C++ | Basic (your includes + fast I/O), Multiple test cases, Competitive (aliases, macros, `LOCAL_INPUT` for `input.txt`), Graph (BFS, DFS), Number theory (mod pow, inverse, sieve, nCr), DSU and Fenwick tree |
+| C | Basic, Multiple test cases |
+| Python | Basic, Fast input (`sys.stdin.readline`), Multiple test cases |
+
+All of them compile with Visual Studio's default settings (no `bits/stdc++.h`, no C++17-only features).
+
+- **Load into main.cpp / main.py**: replaces the practice file with the template (backup first).
+- **Use for "reset after saving"**: that template is what the practice file is reset to after each save.
+- **Edit** opens it in Notepad. **Open templates folder** to add your own: a file named
+  `C++ - Segment tree.cpp` or `Python - Graphs.py` appears in the list automatically.
+  Your edits are never overwritten by updates.
+
 ## The problem header
 
-Put this comment at the very top of `main.cpp` (the template already has it):
+Put this comment at the very top of the practice file (the templates already have it):
 
 ```cpp
 /*
@@ -161,14 +205,25 @@ Put this comment at the very top of `main.cpp` (the template already has it):
 | Field | Required | Notes |
 |---|---|---|
 | `Problem Name` | yes* | *fetched from the link for Codeforces/LeetCode/AtCoder/CSES |
-| `Problem Link` | recommended | decides the platform folder and the problem ID |
+| `Problem Link` | **yes** | identifies the problem (see below), decides the platform folder and the problem ID |
 | `Platform` | no | detected from the link; set it for judges that aren't recognized |
 | `Problem ID` | no | detected (e.g. `4A`, `abc300_a`, `1068`) |
 | `Difficulty` | no | a rating (`800`, `1400`) or `Easy` / `Medium` / `Hard` |
 | `Topics` | no | comma separated; merged with the online tags |
 | `Notes` | no | can span several lines |
 
-Aliases work too: `Name`, `Link`/`URL`, `Tags`, `Rating`/`Level`, `Date`.
+Python files use a docstring instead (the Python templates already have it):
+
+```python
+"""
+Problem Name: Watermelon
+Problem Link: https://codeforces.com/problemset/problem/4/A
+Topics: math
+"""
+```
+
+`// Key: value` or `# Key: value` comment lines at the top work too.
+Aliases work: `Name`, `Link`/`URL`, `Tags`, `Rating`/`Level`, `Date`.
 Any other `Key: value` line (e.g. `Time Complexity: O(n)`) is kept in the saved file.
 
 Saved files get a complete header:
@@ -188,6 +243,20 @@ Saved files get a complete header:
 
 Recognized platforms: Codeforces (contest, problemset, gym), LeetCode, AtCoder, CSES,
 CodeChef, SPOJ, Kattis, HackerRank, VJudge, UVa, Eolymp. Anything else goes to `Other/`.
+
+## Same problem again: how it is recognized
+
+The **problem link is the problem's identity** (that's why it is required):
+
+- Different spellings of the same link are the same problem: `codeforces.com/contest/4/problem/A`
+  = `codeforces.com/problemset/problem/4/A`; `leetcode.com/problems/two-sum/description/` =
+  `leetcode.com/problems/two-sum`; `http`/`https`, `www.`, `?query` and trailing `/` don't matter.
+- Saving a problem that's already in the repo (same language) **updates that file**, even if you
+  renamed the problem. Tick *Keep the old solution too* to save it as `_v2` instead.
+- The update keeps the **date it was first solved** and the **link as first written** (unless you
+  wrote a `Date Solved:` yourself). So saving the same code again, on another day, gives
+  *"Already saved - nothing new to push"* instead of a fake new submission. If the code or the
+  topics/notes changed, it is committed as *Update ...*.
 
 ## How the solutions repo is organized
 
@@ -218,11 +287,12 @@ Only the part of README.md between `<!-- CPSAVER:STATS:START -->` and
 
 Open **Settings** in the window or *CP Solution Saver - Settings* in the Start Menu.
 
-- Practice file and solutions repo folder (plus *Clone* / *Create new GitHub repo*)
-- **Edit** the new-problem template (used by "Reset main.cpp after saving")
+- **Practice files** (one per language) and the solutions repo folder (plus *Clone* / *Create new GitHub repo*)
+- **Templates...**: choose the reset template per language, load or edit templates
 - Look up problems online (on by default)
-- Push after saving (on), update indexes (on), reset `main.cpp` after saving (off)
-- **Add Difficulty/Topics fields to my main.cpp header**: upgrades an old header without touching your code
+- Push after saving (on), update indexes (on), **reset the practice file after a successful save (on)**
+- Quick save: message box (default) or Windows notification
+- **Add Difficulty/Topics fields to my practice files' headers**: upgrades old headers without touching your code
 
 Settings live in `%APPDATA%\CPSolutionSaver\config.json`.
 
@@ -242,7 +312,8 @@ Remember to save (`Ctrl+S`) before using it.
 ## Console mode
 
 ```bat
-cpsaver.cmd -Cli                 :: shows what will be saved, asks, saves and pushes
+cpsaver.cmd -Cli                 :: shows what will be saved, asks, saves and pushes (newest practice file)
+cpsaver.cmd -Cli -MainCpp X.py   :: same, for a specific file
 cpsaver.cmd -Cli -Yes            :: no questions
 cpsaver.cmd -Cli -NoFetch        :: don't look the problem up online
 cpsaver.cmd -Cli -NoPush         :: commit only
@@ -262,8 +333,9 @@ cpsaver.cmd -Version
 Double-click **`run-tests.bat`** (or `powershell -ExecutionPolicy Bypass -File tests\Run-Tests.ps1 -Online`).
 The tests create a temporary repo with a local remote, so your real repo and GitHub are never touched.
 They cover header parsing, platform detection, saving/updating/keep-both, indexes, template reset,
-console mode end to end, quick save, loading a solution back with backups, and (with `-Online`)
-the Codeforces/LeetCode/CSES/AtCoder lookups.
+console mode end to end, quick save, loading a solution back with backups, C/Python files,
+link identity, the first-solve-date rule, templates, settings migration, and (with `-Online`)
+the Codeforces/LeetCode/CSES/AtCoder lookups (84 checks).
 
 ## Uninstall
 
@@ -280,17 +352,20 @@ your solutions repo is never touched. Settings are kept unless you run
 | *Online lookup failed* | No internet or the site is slow; fill the fields by hand. Codeforces data is cached for a day. |
 | Wrong folder / name | Edit the fields in the window before saving, or set `Platform:` / `Problem ID:` in the header. |
 | Hotkey does nothing | Another app uses that key combination. Change it: right-click the Start Menu shortcut (*CP Solution Saver* or *Quick Save*) → Properties → Shortcut key. |
-| No quick-save notification | Focus Assist / Do Not Disturb may hide it. Switch to the message box in Settings, or read `%APPDATA%\CPSolutionSaver\last-quick-save.log`. |
-| Loaded the wrong solution | Your previous `main.cpp` is in the **Backups** folder (Solved problems window). |
-| Visual Studio asks to reload main.cpp | Expected after "Reset main.cpp"; choose **Yes**. |
+| No quick-save notification | Only if you switched to notifications: Focus Assist may hide them. Switch back to the message box in Settings, or read `%APPDATA%\CPSolutionSaver\last-quick-save.log`. |
+| Loaded the wrong solution / template | Your previous file is in the **Backups** folder (Solved problems window). |
+| Visual Studio asks to reload main.cpp | Expected after a reset or a load; choose **Yes**. |
+| Quick save used the wrong language | It uses the practice file saved most recently: save the one you mean (Ctrl+S) first. |
+| *The problem link is required* | Add `Problem Link: https://...` to the header; it's how the app knows which problem it is. |
 | "running scripts is disabled" | Use the shortcuts / `.bat` files: they pass `-ExecutionPolicy Bypass` for this app only. |
 
 ## Project layout
 
 ```
 src/CPSaver.ps1        entry point (window, console mode, rebuild index)
-src/CPSaver.Core.psm1  all logic: header, platforms, online lookup, saving, git, indexes
-src/CPSaver.Gui.ps1    Windows Forms window, settings, topic picker, solved-problems browser, notifications
+src/CPSaver.Core.psm1  all logic: header, languages, platforms, problem identity, online lookup,
+                       saving, git, indexes, templates, quick save, backups
+src/CPSaver.Gui.ps1    Windows Forms window, settings, topic picker, templates, solved-problems browser, notifications
 install.ps1 / .bat     per-user installer
 uninstall.ps1          uninstaller
 tests/Run-Tests.ps1    self-tests

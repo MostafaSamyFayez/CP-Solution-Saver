@@ -171,6 +171,10 @@ try {
     $cf2 = "/*`n * Problem Name: Two Arrays (other spelling)`n * Problem Link: https://codeforces.com/problemset/problem/1234/A`n */`nint main(){}`n"
     $rk = Save-CPSolution -Info (New-CPSolutionInfo -Code $cf2) -RepoPath $repo -UpdateIndexes
     Check 'same problem via a different link spelling updates the same file' ($rk.IsUpdate -and $rk.RelPath -eq 'Codeforces/1234A_Two_Arrays.cpp') "got $($rk.RelPath)"
+    $same = "/*`n * Problem Name: Watermelon`n * Problem Link: https://codeforces.com/problemset/problem/4/A`n */`nint main(){ return 4; }`n"
+    $s1 = Save-CPSolution -Info (New-CPSolutionInfo -Code $same) -RepoPath $repo -UpdateIndexes
+    $s2 = Save-CPSolution -Info (New-CPSolutionInfo -Code ($same -replace 'problemset/problem/4/A', 'contest/4/problem/A')) -RepoPath $repo -UpdateIndexes
+    Check 'same code, link written differently -> nothing new (first link kept)' ($s1.Commit -and $s2.Success -and -not $s2.Commit -and ((Get-Content (Join-Path $repo $s1.RelPath) -Raw) -match 'problemset/problem/4/A'))
     $nolink = Save-CPSolution -Info (New-CPSolutionInfo -Code "/*`n * Problem Name: No Link`n */`nint main(){}") -RepoPath $repo
     Check 'saving without a link is refused' ((-not $nolink.Success) -and ($nolink.Log -join ' ') -match 'link is required')
     # date bug: same code saved again on a later day must not be a new change

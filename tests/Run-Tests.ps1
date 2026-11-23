@@ -22,6 +22,8 @@ function RunGit([string]$dir) { $a = @($args); $o = & git -C $dir @a 2>&1 | ForE
 
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("cpsaver-test-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $tmp | Out-Null
+$oldDataDir = $env:CPSAVER_DATA_DIR
+$env:CPSAVER_DATA_DIR = Join-Path $tmp 'appdata'   # keep backups / logs out of the real %APPDATA%
 try {
     Write-Host "`n[1] Header parsing" -ForegroundColor Cyan
     $code = "/*`r`n * Name: Two Arrays`r`n * Link: https://codeforces.com/contest/1234/problem/a`r`n * Tags: greedy, Sortings`r`n * Rating: 1300`r`n * Time Complexity: O(n log n)`r`n * Notes: first line`r`n *   second line`r`n */`r`n`r`n#include <iostream>`r`nint main(){}`r`n"
@@ -115,8 +117,37 @@ try {
     Check 'cli reset main.cpp' ((Get-Content $main -Raw) -notmatch 'Weird Algorithm')
     Check 'cli pushed' ((RunGit $remote log -1 --format=%s main) -eq 'Add CSES 1068 - Weird Algorithm')
 
+    Write-Host "`n[8] Quick save (no window)" -ForegroundColor Cyan
+    $cfg.ResetAfterSave = $false; $cfg.AutoFetch = $false   # offline: online lookups are tested in [10]
+    Set-Content -Path $main -Value "/*`n * Problem Name: Repetitions`n * Problem Link: https://cses.fi/problemset/task/1069`n * Difficulty: Easy`n * Topics: strings`n */`nint main(){}"
+    $q = Invoke-CPQuickSave -Config $cfg
+    Check 'quick save succeeded' $q.Success ($q.Summary -join ' / ')
+    Check 'quick save title + summary' ($q.Title -eq 'Saved: Repetitions' -and ($q.Summary -join ' ') -match 'CSES/1069_Repetitions.cpp \(new\)' -and ($q.Summary -join ' ') -match 'Pushed to GitHub')
+    Check 'quick save pushed' ((RunGit $remote log -1 --format=%s main) -eq 'Add CSES 1069 - Repetitions')
+    Check 'quick save log file' (Test-Path $q.LogFile)
+    $q2 = Invoke-CPQuickSave -Config $cfg
+    Check 'quick save again -> already saved' ($q2.Success -and $q2.Title -like 'Already saved*')
+    Set-Content -Path $main -Value "int main(){}"
+    $q3 = Invoke-CPQuickSave -Config $cfg
+    Check 'quick save without header -> clear error' ((-not $q3.Success) -and ($q3.Summary -join ' ') -match 'No problem name')
+    Set-Content -Path $main -Value "/*`n * Problem Name: Missing Number`n * Problem Link: https://cses.fi/problemset/task/1083`n */`nint main(){ return 1; }"
+    $out = & $exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $SrcDir 'CPSaver.ps1') -Quick -NoNotify -NoFetch -ConfigPath $cfgPath 2>&1 | Out-String
+    Check 'cli -Quick exit 0 and saved' ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $repo 'CSES/1083_Missing_Number.cpp'))) $out
+
+    Write-Host "`n[9] Browse + load into main.cpp" -ForegroundColor Cyan
+    $sols = @(Get-CPAllSolutions $repo)
+    $rep = $sols | Where-Object { $_.Name -eq 'Repetitions' } | Select-Object -First 1
+    Check 'solutions list has notes/fullpath fields' ($rep -and $rep.FullPath -and (Test-Path $rep.FullPath) -and $null -ne $rep.Notes)
+    Set-Content -Path $main -Value "// my unsaved work"
+    $bk = Import-CPSolution -Config $cfg -RelPath $rep.RelPath
+    Check 'main.cpp now holds the loaded solution' ((Get-Content $main -Raw) -match 'Problem Name: Repetitions')
+    Check 'old main.cpp backed up' ($bk -and (Test-Path $bk) -and ((Get-Content $bk -Raw) -match 'my unsaved work'))
+    for ($i = 0; $i -lt 4; $i++) { Backup-CPPracticeFile -Path $main -Keep 3 | Out-Null; Start-Sleep -Milliseconds 20 }
+    Check 'backups pruned to the newest 3' (@(Get-ChildItem (Get-CPBackupDir) -File).Count -eq 3)
+    Check 'difficulty groups' ((Get-CPDifficultyGroup '1200').Label -eq 'Rating 1200' -and (Get-CPDifficultyGroup 'easy').Label -eq 'Easy' -and (Get-CPDifficultyGroup '').Label -eq 'Unrated')
+
     if ($Online) {
-        Write-Host "`n[8] Online lookups" -ForegroundColor Cyan
+        Write-Host "`n[10] Online lookups" -ForegroundColor Cyan
         $cf = Get-CPProblemMetadata 'https://codeforces.com/problemset/problem/4/A'
         Check 'Codeforces 4A -> Watermelon, 800, tags' ($cf.Ok -and $cf.Name -eq 'Watermelon' -and $cf.Difficulty -eq '800' -and @($cf.Topics).Count -gt 0) $cf.Message
         $lcm = Get-CPProblemMetadata 'https://leetcode.com/problems/two-sum/'
@@ -128,6 +159,7 @@ try {
     }
 }
 finally {
+    $env:CPSAVER_DATA_DIR = $oldDataDir
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
 

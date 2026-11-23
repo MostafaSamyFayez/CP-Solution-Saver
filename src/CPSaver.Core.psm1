@@ -12,11 +12,16 @@
 # ----------------------------------------------------------------------------
 
 $script:AppName    = 'CPSolutionSaver'
-$script:AppVersion = '2.0.0'
+$script:AppVersion = '2.1.0'
 
 function Get-CPAppVersion { $script:AppVersion }
 
 function Get-CPDataDir {
+    # CPSAVER_DATA_DIR lets the self-tests use a temporary folder instead of %APPDATA%
+    if ($env:CPSAVER_DATA_DIR) {
+        if (-not (Test-Path $env:CPSAVER_DATA_DIR)) { New-Item -ItemType Directory -Path $env:CPSAVER_DATA_DIR -Force | Out-Null }
+        return $env:CPSAVER_DATA_DIR
+    }
     $base = [Environment]::GetFolderPath('ApplicationData')
     if (-not $base) { $base = Join-Path $HOME '.config' }
     $dir = Join-Path $base $script:AppName
@@ -35,7 +40,9 @@ function Get-CPDefaultConfig {
         PushAfterSave    = $true
         ResetAfterSave   = $false
         UpdateIndexes    = $true
-        ConfigVersion    = 2
+        QuickSaveNotify  = 'notification'   # 'notification' (Windows toast) or 'dialog' (message box)
+        BackupsToKeep    = 30
+        ConfigVersion    = 3
     }
 }
 
@@ -546,6 +553,8 @@ function Get-CPAllSolutions {
             Difficulty = $(if ($f.Contains('Difficulty')) { $f['Difficulty'] } else { '' })
             Topics     = @(Merge-CPTopics @(,$(if ($f.Contains('Topics')) { $f['Topics'] } else { '' })))
             DateSolved = $(if ($f.Contains('Date Solved')) { $f['Date Solved'] } else { $file.LastWriteTime.ToString('yyyy-MM-dd') })
+            Notes      = $(if ($f.Contains('Notes')) { $f['Notes'] } else { '' })
+            FullPath   = $file.FullName
         })
     }
     return $list.ToArray()
@@ -871,6 +880,106 @@ function Add-CPHeaderFields {
     }
     if ($new -ne $code) { Write-CPTextFile -Path $Path -Text $new; return $true }
     return $false
+}
+
+# ----------------------------------------------------------------------------
+#  Quick save (no window)
+# ----------------------------------------------------------------------------
+
+function Invoke-CPQuickSave {
+    <#
+      Saves main.cpp with the data from its header (+ online lookup) using the
+      settings' defaults: no questions. Returns
+      @{ Success; Title; Summary (string[]); Log (string[]); RelPath; LogFile }.
+      The full log is also written to %APPDATA%\CPSolutionSaver\last-quick-save.log.
+    #>
+    param([Parameter(Mandatory)]$Config, [scriptblock]$Log)
+    $out = @{ Success = $false; Title = 'Quick save failed'; Summary = @(); Log = @(); RelPath = ''; LogFile = (Join-Path (Get-CPDataDir) 'last-quick-save.log') }
+    $lines = New-Object System.Collections.Generic.List[string]
+    $qsLog = $Log
+    # GetNewClosure: Save-CPSolution has its own $Log parameter, so the callback must not look $Log up dynamically
+    $emit = { param($m) $lines.Add($m); if ($qsLog) { & $qsLog $m } }.GetNewClosure()
+    & $emit ("Quick save " + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))
+    try {
+        $problems = @(Test-CPConfig $Config)
+        if ($problems.Count) { $out.Summary = $problems + @('Fix it in Settings (Start Menu > CP Solution Saver - Settings).'); return $out }
+        & $emit "File: $($Config.MainCppPath)"
+        $code = Read-CPTextFile $Config.MainCppPath
+        $info = New-CPSolutionInfo -Code $code -Fetch:([bool]$Config.AutoFetch)
+        if ($info.Metadata) { & $emit $info.Metadata.Message }
+        if (-not $info.Name) {
+            $out.Summary = @('No problem name found.', "Fill 'Problem Name:' or a Codeforces/LeetCode 'Problem Link:' in the header of main.cpp,", 'or open the full window with Ctrl+Alt+Shift+S.')
+            return $out
+        }
+        $res = Save-CPSolution -Info $info -RepoPath $Config.RepoPath -Push:([bool]$Config.PushAfterSave) -UpdateIndexes:([bool]$Config.UpdateIndexes) -Log $emit
+        $out.RelPath = $res.RelPath
+        $details = @()
+        if ($info.Difficulty) { $details += "Difficulty $($info.Difficulty)" }
+        if (@($info.Topics).Count) { $details += (@($info.Topics) -join ', ') }
+        if ($res.Success) {
+            $out.Success = $true
+            if (-not $res.Commit) {
+                $out.Title = "Already saved: $($info.Name)"
+                $out.Summary = @("$($res.RelPath) is already up to date - nothing new to push.")
+            } else {
+                $state = if ($res.IsUpdate) { 'updated' } else { 'new' }
+                $out.Title = "Saved: $($info.Name)"
+                $out.Summary = @("$($res.RelPath) ($state)")
+                if ($details) { $out.Summary += ($details -join ' | ') }
+                $out.Summary += $(if ($res.Pushed) { 'Pushed to GitHub.' } elseif ($Config.PushAfterSave) { 'Committed locally (push skipped).' } else { 'Committed locally (push is off in Settings).' })
+                if ($Config.ResetAfterSave) {
+                    Reset-CPPracticeFile -MainCppPath $Config.MainCppPath -TemplatePath $Config.TemplatePath
+                    $out.Summary += 'main.cpp reset to the template.'
+                    & $emit 'main.cpp reset to the template.'
+                }
+            }
+        } else {
+            $err = @($lines | Where-Object { $_ -like 'ERROR*' }) | Select-Object -Last 1
+            $out.Summary = @($(if ($err) { ($err -split "`n")[0] } else { 'See the log for details.' }))
+            if ($res.Commit) { $out.Summary += 'Your commit is saved locally; it will go up with the next push.' }
+        }
+    } catch {
+        $out.Summary = @("Error: $($_.Exception.Message)")
+        & $emit "ERROR: $($_.Exception.Message)"
+    } finally {
+        & $emit ("Result: " + $out.Title + ' - ' + ($out.Summary -join ' / '))
+        $out.Log = $lines.ToArray()
+        try { Write-CPTextFile -Path $out.LogFile -Text (($lines -join "`r`n") + "`r`n") } catch { }
+    }
+    return $out
+}
+
+# ----------------------------------------------------------------------------
+#  Loading a saved solution back into main.cpp
+# ----------------------------------------------------------------------------
+
+function Backup-CPPracticeFile {
+    <# Copies main.cpp to %APPDATA%\CPSolutionSaver\backups\ and keeps the newest $Keep copies. Returns the backup path. #>
+    param([Parameter(Mandatory)][string]$Path, [int]$Keep = 30)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $dir = Join-Path (Get-CPDataDir) 'backups'
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $name = [IO.Path]::GetFileNameWithoutExtension($Path) + '_' + (Get-Date).ToString('yyyyMMdd_HHmmss_fff') + [IO.Path]::GetExtension($Path)
+    $dest = Join-Path $dir $name
+    Copy-Item -LiteralPath $Path -Destination $dest -Force
+    if ($Keep -gt 0) {
+        Get-ChildItem -LiteralPath $dir -File | Sort-Object LastWriteTime -Descending | Select-Object -Skip $Keep | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+    return $dest
+}
+
+function Get-CPBackupDir { Join-Path (Get-CPDataDir) 'backups' }
+
+function Import-CPSolution {
+    <# Loads a saved solution (repo-relative path) into main.cpp, after backing main.cpp up. Returns the backup path. #>
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][string]$RelPath)
+    $src = Join-Path $Config.RepoPath $RelPath
+    if (-not (Test-Path -LiteralPath $src)) { throw "Solution file not found: $src" }
+    $keep = 30
+    if ($Config.Contains('BackupsToKeep') -and $Config.BackupsToKeep) { $keep = [int]$Config.BackupsToKeep }
+    $backup = Backup-CPPracticeFile -Path $Config.MainCppPath -Keep $keep
+    Write-CPTextFile -Path $Config.MainCppPath -Text (Read-CPTextFile $src)
+    return $backup
 }
 
 # ----------------------------------------------------------------------------

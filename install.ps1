@@ -89,11 +89,14 @@ New-Item -ItemType Directory -Path $menu -Force | Out-Null
 $vbsQ = "`"$(Join-Path $InstallDir 'CPSaver.vbs')`""
 New-Shortcut (Join-Path $menu 'CP Solution Saver.lnk') $vbsQ 'Save an accepted solution to GitHub (Ctrl+Alt+Shift+S)' 'CTRL+ALT+SHIFT+S'
 New-Shortcut (Join-Path $menu 'CP Solution Saver - Settings.lnk') "$vbsQ -Settings" 'Change CP Solution Saver settings' ''
+New-Shortcut (Join-Path $menu 'CP Solution Saver - Quick Save.lnk') "$vbsQ -Quick" 'Save and push main.cpp with no window (Ctrl+Alt+Shift+F)' 'CTRL+ALT+SHIFT+F'
+New-Shortcut (Join-Path $menu 'CP Solution Saver - Solved problems.lnk') "$vbsQ -Browse" 'Search solved problems and load one into main.cpp' ''
 $u = $shell.CreateShortcut((Join-Path $menu 'Uninstall CP Solution Saver.lnk'))
 $u.TargetPath = Join-Path $InstallDir 'uninstall.bat'; $u.WorkingDirectory = $env:TEMP; $u.Save()
 $r = $shell.CreateShortcut((Join-Path $menu 'Read me.lnk'))
 $r.TargetPath = Join-Path $InstallDir 'README.md'; $r.Save()
-Ok "Start Menu: $menu   (hotkey Ctrl+Alt+Shift+S opens the app from anywhere)"
+Ok "Start Menu: $menu"
+Ok 'Hotkeys: Ctrl+Alt+Shift+S = open the app,  Ctrl+Alt+Shift+F = quick save (no window)'
 if (-not $NoDesktopShortcut) {
     New-Shortcut (Join-Path ([Environment]::GetFolderPath('Desktop')) 'CP Solution Saver.lnk') $vbsQ 'Save an accepted solution to GitHub' ''
     Ok 'Desktop shortcut created.'
@@ -136,10 +139,16 @@ if (-not $NoPracticeLauncher -and $cfg.MainCppPath -and (Test-Path -LiteralPath 
         $parent = Split-Path $dir -Parent; if (-not $parent) { break }; $dir = $parent
     }
     if (-not (Get-ChildItem -LiteralPath $dir -Filter *.sln -ErrorAction SilentlyContinue)) { $dir = Split-Path $cfg.MainCppPath -Parent }
-    $launcher = "@echo off`r`nREM Opens CP Solution Saver (installed in $InstallDir)`r`nstart `"`" wscript.exe `"$(Join-Path $InstallDir 'CPSaver.vbs')`" %*`r`n"
+    $vbsPath = Join-Path $InstallDir 'CPSaver.vbs'
+    $launcher = "@echo off`r`nREM Opens CP Solution Saver (installed in $InstallDir)`r`nstart `"`" wscript.exe `"$vbsPath`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $dir 'save_solution.bat'), $launcher, [Text.Encoding]::ASCII)
-    Ok "$(Join-Path $dir 'save_solution.bat')"
+    $quick = "@echo off`r`nREM Quick save: saves and pushes main.cpp with no window, then shows a notification`r`nstart `"`" wscript.exe `"$vbsPath`" -Quick`r`n"
+    [IO.File]::WriteAllText((Join-Path $dir 'quick_save.bat'), $quick, [Text.Encoding]::ASCII)
+    $browse = "@echo off`r`nREM Search your solved problems and load one into main.cpp`r`nstart `"`" wscript.exe `"$vbsPath`" -Browse`r`n"
+    [IO.File]::WriteAllText((Join-Path $dir 'solved_problems.bat'), $browse, [Text.Encoding]::ASCII)
+    Ok "$(Join-Path $dir 'save_solution.bat')  (+ quick_save.bat, solved_problems.bat)"
 }
 
 Write-Host "`nInstalled CP Solution Saver $(Get-CPAppVersion)." -ForegroundColor Green
 Write-Host 'Open it with:  Ctrl+Alt+Shift+S,  the Desktop / Start Menu shortcut,  or save_solution.bat next to your project.' -ForegroundColor Green
+Write-Host 'Quick save (no window): Ctrl+Alt+Shift+F or quick_save.bat.   Browse solved problems: solved_problems.bat or the button in the app.' -ForegroundColor Green

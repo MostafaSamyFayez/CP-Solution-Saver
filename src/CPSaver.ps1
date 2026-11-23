@@ -13,6 +13,8 @@
     CPSaver.ps1 -Cli -Yes          # console mode, no questions
     CPSaver.ps1 -RebuildIndex      # regenerate README stats + Index/*.md and push
     CPSaver.ps1 -Settings          # open the settings window
+    CPSaver.ps1 -Quick             # quick save: no window, just a notification with the result
+    CPSaver.ps1 -Browse            # browse / search solved problems and load one into main.cpp
 #>
 [CmdletBinding()]
 param(
@@ -26,6 +28,9 @@ param(
     [switch]$NoPush,
     [switch]$NoReset,
     [switch]$KeepBoth,
+    [switch]$Quick,
+    [switch]$NoNotify,
+    [switch]$Browse,
     [switch]$Version
 )
 
@@ -40,10 +45,29 @@ Initialize-CPTemplate $config.TemplatePath
 
 $isWindowsHost = ($env:OS -eq 'Windows_NT')
 
+# ---------------------------------------------------------------- quick save
+if ($Quick) {
+    if ($NoFetch) { $config.AutoFetch = $false }
+    if ($NoPush) { $config.PushAfterSave = $false }
+    if ($NoReset) { $config.ResetAfterSave = $false }
+    $res = Invoke-CPQuickSave -Config $config -Log { param($m) Write-Verbose $m }
+    $res.Log | ForEach-Object { Write-Output $_ }
+    if ($isWindowsHost -and -not $NoNotify) {
+        . (Join-Path $PSScriptRoot 'CPSaver.Gui.ps1')
+        $open = Show-CPNotification -Title $res.Title -Lines $res.Summary -IsError:(-not $res.Success) -Mode ([string]$config.QuickSaveNotify) -LogFile $res.LogFile
+        if ($open) { Show-CPMainWindow -Config $config -ConfigPath $ConfigPath }
+    }
+    if ($res.Success) { exit 0 } else { exit 1 }
+}
+
 # ---------------------------------------------------------------- GUI
 if (-not $Cli -and -not $RebuildIndex -and $isWindowsHost) {
     . (Join-Path $PSScriptRoot 'CPSaver.Gui.ps1')
     if ($Settings) { Show-CPSettingsDialog -Config $config -ConfigPath $ConfigPath | Out-Null }
+    elseif ($Browse) {
+        if (@(Test-CPConfig $config).Count) { Show-CPSettingsDialog -Config $config -ConfigPath $ConfigPath -Intro 'Set up your practice file and solutions repo first.' | Out-Null }
+        Show-CPBrowser -Config $config
+    }
     else { Show-CPMainWindow -Config $config -ConfigPath $ConfigPath }
     return
 }

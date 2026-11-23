@@ -229,6 +229,7 @@ function Show-CPSettingsDialog {
     $cPush  = & $mk 'Push to GitHub after saving' $Config.PushAfterSave
     $cReset = & $mk 'Reset main.cpp to the template after saving' $Config.ResetAfterSave
     $cIdx   = & $mk 'Update README progress and topic / difficulty indexes' $Config.UpdateIndexes
+    $cDlg   = & $mk 'Quick save (Ctrl+Alt+Shift+F): show a message box instead of a Windows notification' ($Config.QuickSaveNotify -eq 'dialog')
     $grid.Controls.Add($opts, 0, $row); $grid.SetColumnSpan($opts, 3); $row++
 
     $upg = New-CPButton 'Add Difficulty/Topics fields to my main.cpp header'
@@ -256,6 +257,7 @@ function Show-CPSettingsDialog {
         $Config.RepoPath = $repoBox.Text.Trim('"', ' ')
         $Config.AutoFetch = $cFetch.Checked; $Config.PushAfterSave = $cPush.Checked
         $Config.ResetAfterSave = $cReset.Checked; $Config.UpdateIndexes = $cIdx.Checked
+        $Config.QuickSaveNotify = $(if ($cDlg.Checked) { 'dialog' } else { 'notification' })
         $problems = @(Test-CPConfig $Config)
         if ($problems.Count) {
             $a = [System.Windows.Forms.MessageBox]::Show(($problems -join "`n") + "`n`nSave anyway?", 'Settings', 'YesNo', 'Warning')
@@ -369,7 +371,8 @@ function Show-CPMainWindow {
     $ui.OpenFolder = New-CPButton 'Open repo folder'
     $ui.OpenWeb = New-CPButton 'Open on GitHub'
     $ui.Settings = New-CPButton 'Settings'
-    foreach ($b in @($ui.Save, $ui.Rebuild, $ui.OpenFolder, $ui.OpenWeb, $ui.Settings)) { $btns.Controls.Add($b) }
+    $ui.Browse = New-CPButton 'Solved problems...'
+    foreach ($b in @($ui.Save, $ui.Browse, $ui.Rebuild, $ui.OpenFolder, $ui.OpenWeb, $ui.Settings)) { $btns.Controls.Add($b) }
     $grid.Controls.Add($btns, 0, $row); $grid.SetColumnSpan($btns, 3); $row++
 
     $ui.Status = New-CPLabel 'Ready.' $script:CPFontBold
@@ -514,6 +517,11 @@ function Show-CPMainWindow {
             $f.Cursor = 'Default'; & $setStatus 'Index rebuilt.' $script:CPGreen
         }
     })
+    $ui.Browse.Add_Click({
+        Invoke-CPSafe -What 'Solved problems' {
+            Show-CPBrowser -Config $Config -OnLoaded { param($p) $ui.Log.Clear(); & $loadFile $false; & $log "Loaded $p into main.cpp (old main.cpp backed up)." }
+        }
+    })
     $ui.OpenFolder.Add_Click({ Start-Process explorer.exe -ArgumentList "`"$($Config.RepoPath)`"" })
     $ui.OpenWeb.Add_Click({
         Invoke-CPSafe -What 'Open on GitHub' {
@@ -542,6 +550,278 @@ function Show-CPMainWindow {
     })
     $f.Add_FormClosed({ $timer.Stop(); $mtimeTimer.Stop() })
 
+    [void]$f.ShowDialog()
+    $f.Dispose()
+}
+
+# ============================================================================
+#  Notifications (used by quick save)
+# ============================================================================
+function Show-CPTopMessage {
+    param([string]$Text, [string]$Title = 'CP Solution Saver', [string]$Buttons = 'OK', [string]$Icon = 'Information')
+    $owner = New-Object System.Windows.Forms.Form
+    $owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.StartPosition = 'CenterScreen'
+    $owner.FormBorderStyle = 'None'; $owner.Size = New-Object System.Drawing.Size(1, 1); $owner.Opacity = 0
+    $owner.Show(); $owner.Activate()
+    try { return [System.Windows.Forms.MessageBox]::Show($owner, $Text, $Title, $Buttons, $Icon) }
+    finally { $owner.Close(); $owner.Dispose() }
+}
+
+function Show-CPNotification {
+    <#
+      Shows the result of a quick save. Success: a Windows notification
+      (or a message box when $Mode = 'dialog'). Errors always use a message box
+      and offer to open the full window; returns $true if the user wants that.
+    #>
+    param([string]$Title, [string[]]$Lines, [switch]$IsError, [string]$Mode = 'notification', [string]$LogFile)
+    $text = ($Lines | Where-Object { $_ }) -join "`n"
+    if ($IsError) {
+        $msg = $text + "`n`nOpen CP Solution Saver to fix it?"
+        if ($LogFile) { $msg = $text + "`n`n(Details: $LogFile)`n`nOpen CP Solution Saver to fix it?" }
+        return ((Show-CPTopMessage -Text $msg -Title $Title -Buttons 'YesNo' -Icon 'Warning') -eq 'Yes')
+    }
+    if ($Mode -eq 'dialog') { Show-CPTopMessage -Text $text -Title $Title | Out-Null; return $false }
+    try {
+        $ni = New-Object System.Windows.Forms.NotifyIcon
+        $ico = Get-CPAppIcon
+        $ni.Icon = $(if ($ico) { $ico } else { [System.Drawing.SystemIcons]::Information })
+        $ni.Text = 'CP Solution Saver'
+        $ni.Visible = $true
+        $ni.BalloonTipTitle = $(if ($Title.Length -gt 60) { $Title.Substring(0, 60) } else { $Title })
+        $ni.BalloonTipText = $(if ($text.Length -gt 250) { $text.Substring(0, 250) } else { $text })
+        $ni.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
+        $ni.ShowBalloonTip(8000)
+        $end = (Get-Date).AddSeconds(8)
+        while ((Get-Date) -lt $end) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
+        $ni.Visible = $false; $ni.Dispose()
+    } catch {
+        Show-CPTopMessage -Text $text -Title $Title | Out-Null
+    }
+    return $false
+}
+
+# ============================================================================
+#  Solved problems browser
+# ============================================================================
+function ConvertTo-CPLikeLiteral([string]$s) {
+    # escape a value for a DataView RowFilter LIKE pattern
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($ch in $s.ToCharArray()) {
+        switch ($ch) {
+            "'" { [void]$sb.Append("''") }
+            '[' { [void]$sb.Append('[[]') }
+            ']' { [void]$sb.Append('[]]') }
+            '*' { [void]$sb.Append('[*]') }
+            '%' { [void]$sb.Append('[%]') }
+            default { [void]$sb.Append($ch) }
+        }
+    }
+    return $sb.ToString()
+}
+
+function Show-CPBrowser {
+    <#
+      Lists every saved solution with search + filters and a code preview.
+      "Load into main.cpp" backs main.cpp up, then replaces it.
+      -OnLoaded: scriptblock called after a solution was loaded.
+    #>
+    param([Parameter(Mandatory)]$Config, [scriptblock]$OnLoaded)
+
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text = 'CP Solution Saver - Solved problems'; $f.Font = $script:CPFont; $f.StartPosition = 'CenterScreen'
+    $f.Size = New-Object System.Drawing.Size(1100, 760); $f.MinimumSize = New-Object System.Drawing.Size(800, 520)
+    $f.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi; $f.KeyPreview = $true
+    $ico = Get-CPAppIcon; if ($ico) { $f.Icon = $ico }
+    $b = @{}
+
+    $root = New-Object System.Windows.Forms.TableLayoutPanel
+    $root.Dock = 'Fill'; $root.ColumnCount = 1; $root.RowCount = 4; $root.Padding = New-Object System.Windows.Forms.Padding(10, 8, 10, 8)
+    [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$root.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+
+    $title = New-CPLabel 'Solved problems' $script:CPFontTitle; $title.ForeColor = $script:CPAccent
+    $root.Controls.Add($title, 0, 0)
+
+    # filter row
+    $flt = New-Object System.Windows.Forms.TableLayoutPanel
+    $flt.Dock = 'Fill'; $flt.AutoSize = $true; $flt.ColumnCount = 10; $flt.RowCount = 1; $flt.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 4)
+    foreach ($w in @(0, 100, 0, 0, 0, 0, 0, 0, 0, 0)) {
+        if ($w) { [void]$flt.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $w))) }
+        else { [void]$flt.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize))) }
+    }
+    $mkCombo = { $c = New-Object System.Windows.Forms.ComboBox; $c.DropDownStyle = 'DropDownList'; $c.Font = $script:CPFont; $c.Width = 150; $c.Anchor = [System.Windows.Forms.AnchorStyles]::Left; $c }
+    $b.Search = New-CPTextBox
+    $b.Platform = & $mkCombo; $b.Topic = & $mkCombo; $b.Topic.Width = 190; $b.Diff = & $mkCombo
+    $b.Clear = New-CPButton 'Clear'
+    $flt.Controls.Add((New-CPLabel 'Search:'), 0, 0); $flt.Controls.Add($b.Search, 1, 0)
+    $flt.Controls.Add((New-CPLabel '  Platform:'), 2, 0); $flt.Controls.Add($b.Platform, 3, 0)
+    $flt.Controls.Add((New-CPLabel '  Topic:'), 4, 0); $flt.Controls.Add($b.Topic, 5, 0)
+    $flt.Controls.Add((New-CPLabel '  Difficulty:'), 6, 0); $flt.Controls.Add($b.Diff, 7, 0)
+    $flt.Controls.Add($b.Clear, 8, 0)
+    $root.Controls.Add($flt, 0, 1)
+
+    # grid + preview
+    $split = New-Object System.Windows.Forms.SplitContainer
+    $split.Dock = 'Fill'; $split.Orientation = 'Horizontal'; $split.SplitterWidth = 6
+    $b.Grid = New-Object System.Windows.Forms.DataGridView
+    $g = $b.Grid
+    $g.Dock = 'Fill'; $g.ReadOnly = $true; $g.AllowUserToAddRows = $false; $g.AllowUserToDeleteRows = $false
+    $g.SelectionMode = 'FullRowSelect'; $g.MultiSelect = $false; $g.RowHeadersVisible = $false
+    $g.AutoSizeColumnsMode = 'Fill'; $g.BackgroundColor = [System.Drawing.Color]::White; $g.BorderStyle = 'FixedSingle'
+    $g.Font = $script:CPFont; $g.AllowUserToResizeRows = $false
+    $g.ColumnHeadersDefaultCellStyle.Font = $script:CPFontBold
+    $g.AlternatingRowsDefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(246, 248, 250)
+    $split.Panel1.Controls.Add($g)
+
+    $prevPanel = New-Object System.Windows.Forms.TableLayoutPanel
+    $prevPanel.Dock = 'Fill'; $prevPanel.ColumnCount = 1; $prevPanel.RowCount = 2
+    [void]$prevPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$prevPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    $b.PrevTitle = New-CPLabel 'Select a problem to preview its solution.' $script:CPFontBold
+    $b.Preview = New-Object System.Windows.Forms.TextBox
+    $b.Preview.Multiline = $true; $b.Preview.ReadOnly = $true; $b.Preview.ScrollBars = 'Both'; $b.Preview.WordWrap = $false
+    $b.Preview.Font = New-Object System.Drawing.Font('Consolas', 10); $b.Preview.Dock = 'Fill'; $b.Preview.BackColor = [System.Drawing.Color]::FromArgb(250, 250, 250)
+    $prevPanel.Controls.Add($b.PrevTitle, 0, 0); $prevPanel.Controls.Add($b.Preview, 0, 1)
+    $split.Panel2.Controls.Add($prevPanel)
+    $root.Controls.Add($split, 0, 2)
+
+    # bottom row
+    $bottom = New-Object System.Windows.Forms.TableLayoutPanel
+    $bottom.Dock = 'Fill'; $bottom.AutoSize = $true; $bottom.ColumnCount = 2
+    [void]$bottom.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$bottom.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    $b.Status = New-CPLabel ''
+    $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.AutoSize = $true; $btns.WrapContents = $false
+    $b.Load = New-CPButton 'Load into main.cpp' 170
+    $b.Load.Font = $script:CPFontBold; $b.Load.BackColor = [System.Drawing.Color]::FromArgb(31, 136, 61); $b.Load.ForeColor = [System.Drawing.Color]::White; $b.Load.FlatStyle = 'Flat'
+    $b.OpenLink = New-CPButton 'Open problem page'
+    $b.OpenFile = New-CPButton 'Open file'
+    $b.Backups = New-CPButton 'Backups'
+    $b.Refresh = New-CPButton 'Refresh'
+    $b.Close = New-CPButton 'Close'
+    foreach ($x in @($b.Load, $b.OpenLink, $b.OpenFile, $b.Backups, $b.Refresh, $b.Close)) { $btns.Controls.Add($x) }
+    $bottom.Controls.Add($b.Status, 0, 0); $bottom.Controls.Add($btns, 1, 0)
+    $root.Controls.Add($bottom, 0, 3)
+    $f.Controls.Add($root)
+
+    # ---------------------------------------------------------------- data
+    $dt = New-Object System.Data.DataTable
+    foreach ($c in @('Name', 'Platform', 'ID', 'Difficulty', 'Topics', 'Solved', 'Path', 'Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'SearchText')) { [void]$dt.Columns.Add($c, [string]) }
+    $view = New-Object System.Data.DataView($dt)
+    $st = @{ Total = 0; SortCol = 'Solved'; SortDesc = $true; Loading = $false }
+
+    $fillCombo = {
+        param($combo, $allText, $items)
+        $prev = [string]$combo.SelectedItem
+        $combo.Items.Clear(); [void]$combo.Items.Add($allText)
+        foreach ($i in $items) { [void]$combo.Items.Add($i) }
+        $idx = $combo.Items.IndexOf($prev); $combo.SelectedIndex = $(if ($idx -ge 0) { $idx } else { 0 })
+    }
+
+    $loadData = {
+        $st.Loading = $true
+        $dt.Rows.Clear()
+        $all = @()
+        try { $all = @(Get-CPAllSolutions $Config.RepoPath) } catch { $b.Status.Text = "Could not read the repo: $($_.Exception.Message)" }
+        $plats = @{}; $topics = @{}; $diffs = @{}
+        foreach ($s in $all) {
+            $dg = Get-CPDifficultyGroup $s.Difficulty
+            $tl = @($s.Topics | ForEach-Object { $_.ToLowerInvariant() })
+            $r = $dt.NewRow()
+            $r['Name'] = $s.Name; $r['Platform'] = $s.Platform; $r['ID'] = $s.Id; $r['Difficulty'] = $s.Difficulty
+            $r['Topics'] = ($tl -join ', '); $r['Solved'] = $s.DateSolved; $r['Path'] = $s.RelPath; $r['Link'] = $s.Link
+            $r['FullPath'] = $s.FullPath; $r['TopicsKey'] = ',' + ($tl -join ',') + ','
+            $r['DiffGroup'] = $dg.Label; $r['DiffSort'] = $dg.SortKey
+            $r['SearchText'] = (@($s.Name, $s.Id, $s.Platform, $s.RelPath, $s.Notes, ($tl -join ' '), $s.Link) -join ' ').ToLowerInvariant()
+            $dt.Rows.Add($r)
+            $plats[$s.Platform] = 1; foreach ($t in $tl) { $topics[$t] = 1 }; $diffs[$dg.Label] = $dg.SortKey
+        }
+        $st.Total = $all.Count
+        & $fillCombo $b.Platform 'All platforms' @($plats.Keys | Sort-Object)
+        & $fillCombo $b.Topic 'All topics' @($topics.Keys | Sort-Object)
+        & $fillCombo $b.Diff 'All difficulties' @($diffs.Keys | Sort-Object { $diffs[$_] })
+        $st.Loading = $false
+        & $applyFilter
+    }
+
+    $applyFilter = {
+        if ($st.Loading) { return }
+        $conds = New-Object System.Collections.Generic.List[string]
+        foreach ($term in ($b.Search.Text.ToLowerInvariant() -split '\s+' | Where-Object { $_ })) {
+            $conds.Add("SearchText LIKE '%" + (ConvertTo-CPLikeLiteral $term) + "%'")
+        }
+        if ($b.Platform.SelectedIndex -gt 0) { $conds.Add("Platform = '" + ([string]$b.Platform.SelectedItem -replace "'", "''") + "'") }
+        if ($b.Topic.SelectedIndex -gt 0) { $conds.Add("TopicsKey LIKE '%," + (ConvertTo-CPLikeLiteral ([string]$b.Topic.SelectedItem)) + ",%'") }
+        if ($b.Diff.SelectedIndex -gt 0) { $conds.Add("DiffGroup = '" + ([string]$b.Diff.SelectedItem -replace "'", "''") + "'") }
+        $view.RowFilter = ($conds -join ' AND ')
+        $sortCol = if ($st.SortCol -eq 'Difficulty') { 'DiffSort' } else { $st.SortCol }
+        $view.Sort = "$sortCol $(if ($st.SortDesc) { 'DESC' } else { 'ASC' }), Name ASC"
+        $b.Status.Text = if ($st.Total -eq 0) { 'No solutions saved yet. Save one first, then come back here.' } else { "Showing $($view.Count) of $($st.Total) solved problems" }
+        if ($view.Count -eq 0) { $b.Preview.Text = ''; $b.PrevTitle.Text = 'No match.' }
+    }
+
+    $g.DataSource = $view
+    $g.Add_DataBindingComplete({
+        foreach ($c in @('Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'SearchText')) { if ($g.Columns[$c]) { $g.Columns[$c].Visible = $false } }
+        $weights = @{ Name = 26; Platform = 10; ID = 8; Difficulty = 9; Topics = 25; Solved = 10; Path = 22 }
+        foreach ($k in $weights.Keys) { if ($g.Columns[$k]) { $g.Columns[$k].FillWeight = $weights[$k]; $g.Columns[$k].SortMode = 'Programmatic' } }
+        foreach ($c in $g.Columns) { if ($c.Name -eq $st.SortCol) { $c.HeaderCell.SortGlyphDirection = $(if ($st.SortDesc) { 'Descending' } else { 'Ascending' }) } else { $c.HeaderCell.SortGlyphDirection = 'None' } }
+    })
+    $g.Add_ColumnHeaderMouseClick({
+        param($s, $e)
+        $name = $g.Columns[$e.ColumnIndex].Name
+        if ($st.SortCol -eq $name) { $st.SortDesc = -not $st.SortDesc } else { $st.SortCol = $name; $st.SortDesc = ($name -eq 'Solved') }
+        & $applyFilter
+    })
+
+    $current = {
+        if ($g.SelectedRows.Count -eq 0) { return $null }
+        $drv = $g.SelectedRows[0].DataBoundItem
+        if ($null -eq $drv) { return $null }
+        return $drv.Row
+    }
+    $g.Add_SelectionChanged({
+        $r = & $current
+        if (-not $r) { return }
+        $b.PrevTitle.Text = "$($r['Name'])   -   $($r['Path'])"
+        try { $b.Preview.Text = ([IO.File]::ReadAllText($r['FullPath']) -replace "(?<!`r)`n", "`r`n") } catch { $b.Preview.Text = "Could not read the file: $($_.Exception.Message)" }
+    })
+
+    $doLoad = {
+        $r = & $current
+        if (-not $r) { $b.Status.Text = 'Select a problem first.'; return }
+        $q = "Load '$($r['Name'])' into your main.cpp?`n`n$($Config.MainCppPath)`n`nYour current main.cpp is backed up first (button 'Backups' to find it)."
+        if ([System.Windows.Forms.MessageBox]::Show($q, 'Load solution', 'YesNo', 'Question') -ne 'Yes') { return }
+        $backup = Import-CPSolution -Config $Config -RelPath $r['Path']
+        $b.Status.Text = "Loaded $($r['Path']) into main.cpp. Backup: $([IO.Path]::GetFileName($backup))"
+        $b.Status.ForeColor = $script:CPGreen
+        if ($OnLoaded) { & $OnLoaded $r['Path'] }
+        [System.Windows.Forms.MessageBox]::Show("Loaded into main.cpp.`n`nIf Visual Studio asks whether to reload the file, choose Yes.", 'Load solution') | Out-Null
+    }
+
+    $b.Search.Add_TextChanged({ & $applyFilter })
+    foreach ($c in @($b.Platform, $b.Topic, $b.Diff)) { $c.Add_SelectedIndexChanged({ & $applyFilter }) }
+    $b.Clear.Add_Click({ $st.Loading = $true; $b.Search.Text = ''; $b.Platform.SelectedIndex = 0; $b.Topic.SelectedIndex = 0; $b.Diff.SelectedIndex = 0; $st.Loading = $false; & $applyFilter })
+    $b.Load.Add_Click({ Invoke-CPSafe -What 'Loading the solution' $doLoad })
+    $g.Add_CellDoubleClick({ param($s, $e) if ($e.RowIndex -ge 0) { Invoke-CPSafe -What 'Loading the solution' $doLoad } })
+    $b.OpenLink.Add_Click({ $r = & $current; if ($r -and $r['Link']) { Start-Process $r['Link'] } else { $b.Status.Text = 'This problem has no link.' } })
+    $b.OpenFile.Add_Click({ $r = & $current; if ($r) { Start-Process notepad.exe -ArgumentList "`"$($r['FullPath'])`"" } })
+    $b.Backups.Add_Click({ $d = Get-CPBackupDir; if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; Start-Process explorer.exe -ArgumentList "`"$d`"" })
+    $b.Refresh.Add_Click({ Invoke-CPSafe -What 'Refresh' $loadData })
+    $b.Close.Add_Click({ $f.Close() })
+    $f.Add_KeyDown({
+        param($s, $e)
+        if ($e.Control -and $e.KeyCode -eq 'F') { $b.Search.Focus(); $e.SuppressKeyPress = $true }
+        elseif ($e.KeyCode -eq 'Escape') { $f.Close() }
+        elseif ($e.KeyCode -eq 'Enter' -and $g.Focused) { $e.SuppressKeyPress = $true; Invoke-CPSafe -What 'Loading the solution' $doLoad }
+    })
+    $f.Add_Shown({
+        $split.SplitterDistance = [int]($split.Height * 0.52)
+        Invoke-CPSafe -What 'Reading solutions' $loadData
+        $b.Search.Focus()
+    })
     [void]$f.ShowDialog()
     $f.Dispose()
 }

@@ -335,7 +335,7 @@ The tests create a temporary repo with a local remote, so your real repo and Git
 They cover header parsing, platform detection, saving/updating/keep-both, indexes, template reset,
 console mode end to end, quick save, loading a solution back with backups, C/Python files,
 link identity, the first-solve-date rule, templates, settings migration, and (with `-Online`)
-the Codeforces/LeetCode/CSES/AtCoder lookups (84 checks).
+the Codeforces/LeetCode/CSES/AtCoder lookups (83 checks).
 
 ## Uninstall
 

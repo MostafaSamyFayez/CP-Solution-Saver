@@ -9,7 +9,8 @@
 #>
 param([switch]$Online, [string]$SrcDir = (Join-Path (Split-Path $PSScriptRoot -Parent) 'src'))
 
-$ErrorActionPreference = 'Stop'
+# 'Continue': Windows PowerShell 5.1 turns git's stderr warnings into errors under 'Stop'.
+$ErrorActionPreference = 'Continue'
 Import-Module (Join-Path $SrcDir 'CPSaver.Core.psm1') -Force -DisableNameChecking
 
 $script:pass = 0; $script:fail = 0

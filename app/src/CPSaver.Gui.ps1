@@ -519,7 +519,9 @@ function Show-CPUpdateDialog {
     $notes = New-Object System.Windows.Forms.TextBox; $notes.Multiline = $true; $notes.ReadOnly = $true; $notes.ScrollBars = 'Vertical'
     $notes.Font = $script:CPFontSmall; $notes.BackColor = $script:CPBg; $notes.BorderStyle = 'FixedSingle'
     $notes.Width = 560; $notes.Height = 180; $notes.TabStop = $false
-    $txt = ($Release.Notes -replace '\r?\n', "`r`n" -replace '\*\*', '')
+    # release notes are markdown: drop the install line, heading marks and bold marks
+    $noteLines = @(([string]$Release.Notes) -split '\r?\n' | Where-Object { $_ -notmatch '^\s*\**Install:' } | ForEach-Object { ($_ -replace '^\s*#{1,6}\s*', '') -replace '\*\*', '' -replace '`', '' })
+    $txt = (($noteLines -join "`r`n").Trim())
     if ($txt.Length -gt 4000) { $txt = $txt.Substring(0, 4000) + "`r`n..." }
     $notes.Text = $(if ($txt.Trim()) { $txt } else { '(no notes)' })
     $g.Controls.Add($notes)

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.1 - 2026-11-23
+
+- Update window: the release notes are shown as clean text (no markdown marks).
+- The "updated" page no longer suggests deleting a downloaded folder.
+
 ## 2.6.0 - 2026-11-23
 
 ### Updates itself

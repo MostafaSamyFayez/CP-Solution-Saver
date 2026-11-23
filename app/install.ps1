@@ -155,7 +155,7 @@ function Show-InstallDone {
         if ($Update) { $g.Controls.Add((New-InstallText "Updated to version $(Get-CPAppVersion). Click Finish to start it again (it runs in the tray). What changed: see the release page or CHANGELOG.md." $script:CPAccent)) }
         else { $g.Controls.Add((New-InstallText 'Click Finish to open it. A short tour shows you how to use it, then you choose your practice file and solutions folder (only the first time).' $script:CPAccent)) }
         $g.Controls.Add((New-InstallText "Ctrl+Alt+Shift+S   save window`r`nCtrl+Alt+Shift+F   quick save`r`nCtrl+Alt+Shift+B   solved problems" $script:CPAccent $script:CPFontBold))
-        $g.Controls.Add((New-InstallText 'It lives in the tray, next to the clock (right-click the icon for everything). You can delete the downloaded folder now.' $script:CPMuted))
+        $g.Controls.Add((New-InstallText $(if ($Update) { 'It lives in the tray, next to the clock (right-click the icon for everything).' } else { 'It lives in the tray, next to the clock (right-click the icon for everything). You can delete the downloaded folder now.' }) $script:CPMuted))
         foreach ($w in $script:Warnings) { $g.Controls.Add((New-InstallText $w $script:CPOrange)) }
     }
     $btns = New-Object System.Windows.Forms.FlowLayoutPanel; $btns.FlowDirection = 'RightToLeft'; $btns.AutoSize = $true; $btns.Dock = 'Fill'

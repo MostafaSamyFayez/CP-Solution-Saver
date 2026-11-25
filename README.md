@@ -35,6 +35,8 @@ lookups and GitHub pushes run in the background so the window never freezes.
    - [Shortcuts and the tray icon](#shortcuts-and-the-tray-icon)
 4. [Quick save (no window)](#quick-save-no-window)
 5. [Solved problems: search and load back](#solved-problems-search-and-load-back)
+   - [Levels, stars and numbers](#levels-stars-and-numbers)
+   - [Analytics report](#analytics-report)
 6. [Several languages (C++, C, Python)](#several-languages-c-c-python)
 7. [Code templates](#code-templates)
 8. [The problem header](#the-problem-header)
@@ -72,6 +74,8 @@ lookups and GitHub pushes run in the background so the window never freezes.
 - **Several languages**: C++, C, Python (and Java/JS/C#/Go/Rust/Kotlin files are understood too).
 - **Code templates**: 11 built-in templates (basic, multiple tests, competitive, graph, number theory,
   DSU/Fenwick, C, Python), plus your own; pick which one "reset" uses per language.
+- **Analytics report**: charts of your progress (streaks, calendar, levels, ratings, topics) from everything saved so far.
+- **Levels, stars, numbers**: Easy / Medium / Hard for every problem, star your favourites, #1 = first solved.
 - **Solved problems browser**: search by name, filter by platform / topic / difficulty, preview the code,
   and load a solution back into `main.cpp` (your current file is backed up first).
 
@@ -203,8 +207,12 @@ Start Menu > *CP Solution Saver - Solved problems*.
 ![Solved problems browser](app/docs/screenshot-browser.png)
 
 - **Search** box: matches name, problem ID, platform, topics, notes, file name and link (several words = all must match). `Ctrl+F` jumps to it.
-- **Platform / Topic / Difficulty / Language** filters (built from what you've solved); **Clear** resets them.
-- Click a column header to sort (Difficulty sorts by rating, then Easy/Medium/Hard).
+- **Platform / Topic / Difficulty / Language** filters (built from what you've solved); the Difficulty
+  filter has the levels first (**Easy / Medium / Hard / Unrated**, across all platforms) and then exact
+  ratings. **Starred** shows only starred problems. **Clear** resets them.
+- Click a column header to sort, and again to reverse: **#**, star, name, platform, difficulty (by level,
+  then rating), date... The filtered list stays filtered; your last sort is remembered.
+- **Star** (or click the star cell) stars / unstars the selected problem.
 - The lower half previews the selected solution.
 - **Load into practice file** (or double-click / Enter): asks first, **backs up your current file**
   to `%APPDATA%\CPSolutionSaver\backups` (the newest 30 are kept; **Backups** button opens the folder),
@@ -213,6 +221,35 @@ Start Menu > *CP Solution Saver - Solved problems*.
 - **Open problem page** / **Open file** for the selected problem.
 
 A loaded solution keeps its header, so if you improve it and save again it **updates the same file**.
+
+### Levels, stars and numbers
+
+- **Level** (Easy / Medium / Hard) sits next to the difficulty. It is worked out for you: LeetCode's own
+  level, or a numeric rating grouped as *under 1200 Easy, 1200-1799 Medium, 1800+ Hard* (change the
+  cut-offs in Settings). Problems with no difficulty (CSES...) are *Unrated* until you pick a level in the
+  save window (or write `Level: Medium` in the header). It is saved in the file's header.
+- **Stars**: tick *Star this problem* in the save window, or use **Star** in Solved problems. It is saved
+  in the header (`Starred: yes`), committed and pushed, so it travels with your repo. Saving the problem
+  again keeps the star. The README gets a *Starred* list.
+- **Numbers**: every problem gets a number in the order you first solved it (**#1** is your first). The
+  same problem in two languages shares one number. Shown in Solved problems, the index pages and the report.
+
+### Analytics report
+
+**Report** (save window or Solved problems), tray menu > **Analytics report**, or Start Menu >
+*CP Solution Saver - Analytics report* opens a page in your browser with charts of your progress:
+
+![Analytics report](app/docs/screenshot-report.png)
+
+- totals, this week / month, current and longest streak, active days;
+- a calendar of the last year, total solved over time, problems per week;
+- by level, by rating (bands of 100), average rating by month (are you getting to harder problems?);
+- top topics, a topic-by-level table (empty cells = gaps), "practice next" suggestions;
+- platforms, languages, hardest solved, recently solved, starred.
+
+It is built every time from the headers of the files in your solutions folder, so **everything you have
+saved so far counts**, including problems saved by older versions. It works offline and nothing is sent
+anywhere (the page is `%APPDATA%\CPSolutionSaver\report.html`). Hover a bar, dot or square for details.
 
 ## Several languages (C++, C, Python)
 
@@ -267,6 +304,8 @@ Put this comment at the very top of the practice file (the templates already hav
 | `Platform` | no | detected from the link; set it for judges that aren't recognized |
 | `Problem ID` | no | detected (e.g. `4A`, `abc300_a`, `1068`) |
 | `Difficulty` | no | a rating (`800`, `1400`) or `Easy` / `Medium` / `Hard` |
+| `Level` | no | `Easy` / `Medium` / `Hard`; filled in from the difficulty when empty |
+| `Starred` | no | `yes` to star the problem (the app writes it when you star one) |
 | `Topics` | no | comma separated; merged with the online tags |
 | `Notes` | no | can span several lines |
 

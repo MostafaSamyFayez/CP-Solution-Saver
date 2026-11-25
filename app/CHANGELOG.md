@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.7.0 - 2026-11-25
+
+### Analytics report
+- **Report** button (save window, Solved problems), tray menu > *Analytics report*, Start Menu shortcut:
+  opens a page with your progress - totals, this week / month, streaks, a calendar of the last year,
+  total over time, problems per week, by level, by rating, average rating by month, top topics, a
+  topic-by-level table, practice-next hints, platforms, languages, hardest / recent / starred problems.
+- Built from the headers of the files in your solutions folder, so everything saved so far counts.
+  Works offline, light and dark mode, hover for details.
+
+### Levels, stars, numbers, sorting
+- **Level** (Easy / Medium / Hard) for every problem: from LeetCode, your header, or the rating (under
+  1200 Easy, 1200-1799 Medium, 1800+ Hard - cut-offs in Settings). Pick it by hand in the save window
+  for unrated problems. Saved in the header; filters across platforms; index pages grouped by level.
+- **Star** problems (save window checkbox, or *Star* / the star cell in Solved problems) and filter
+  *Starred* only. Saved in the header, committed and pushed; kept when you save the problem again;
+  the README gets a *Starred* list.
+- **Numbers**: #1 is the first problem you solved (same problem in two languages = one number), shown
+  in Solved problems, the index pages and the report.
+- **Sorting** in Solved problems by #, star, difficulty (level, then rating), date, name, platform...;
+  the last sort is remembered.
+
 ## 2.6.1 - 2026-11-23
 
 - Update window: the release notes are shown as clean text (no markdown marks).

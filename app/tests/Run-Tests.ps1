@@ -79,7 +79,7 @@ try {
     $byTopic = Get-Content (Join-Path $repo 'Index/BY_TOPIC.md') -Raw
     Check 'topic index has greedy and sortings' ($byTopic -match '## greedy' -and $byTopic -match '## sortings')
     $byDiff = Get-Content (Join-Path $repo 'Index/BY_DIFFICULTY.md') -Raw
-    Check 'difficulty index has Rating 1300' ($byDiff -match '## Rating 1300')
+    Check 'difficulty index has the Medium level (1300)' ($byDiff -match '## Medium')
 
     Write-Host "`n[4] Same problem again" -ForegroundColor Cyan
     $code2 = $code -replace 'Two Arrays', 'Two Arrays (renamed)' -replace 'int main\(\)\{\}', 'int main(){ return 0; }'
@@ -332,6 +332,54 @@ try {
     Check 'not due: 1 hour ago' (-not (Test-CPUpdateCheckDue -Config @{ AutoUpdateCheck = $true; LastUpdateCheck = '2026-11-23 19:00' } -Now $now))
     Check 'not due: turned off' (-not (Test-CPUpdateCheckDue -Config @{ AutoUpdateCheck = $false; LastUpdateCheck = '' } -Now $now))
     Check 'new settings default to checking' ((Get-CPConfig (Join-Path $tmp 'upd.json')).AutoUpdateCheck -eq $true)
+
+    Write-Host "`n[16] Level, stars, numbers, report" -ForegroundColor Cyan
+    Check 'level from rating' ((Get-CPLevel '800') -eq 'Easy' -and (Get-CPLevel '1500') -eq 'Medium' -and (Get-CPLevel '1800') -eq 'Hard')
+    Check 'level from words' ((Get-CPLevel 'medium') -eq 'Medium' -and (Get-CPLevel 'EASY') -eq 'Easy')
+    Check 'level written by hand wins' ((Get-CPLevel -Difficulty '900' -Level 'Hard') -eq 'Hard')
+    Check 'unknown difficulty = no level' ((Get-CPLevel '') -eq '' -and (Get-CPLevel 'Div2 B') -eq '')
+    Set-CPLevelCutoffs @{ LevelMediumFrom = 1000; LevelHardFrom = 1400 }
+    Check 'cut-offs from the settings' ((Get-CPLevel '1100') -eq 'Medium' -and (Get-CPLevel '1400') -eq 'Hard')
+    Set-CPLevelCutoffs @{ LevelMediumFrom = 1200; LevelHardFrom = 1800 }
+    Check 'difficulty sort: level, then rating' (((@('1900', 'Easy', '1300', '800', '', 'Hard') | Sort-Object { Get-CPDifficultySortKey $_ }) -join ',') -eq 'Easy,800,1300,Hard,1900,')
+    $lv = Join-Path $tmp 'levels'; New-Item -ItemType Directory -Path $lv | Out-Null; Initialize-CPRepo $lv | Out-Null
+    RunGit $lv config user.email t@e.com | Out-Null; RunGit $lv config user.name t | Out-Null
+    $mk = { param($name, $link, $diff, $date, $extra) "/*`n * Problem Name: $name`n * Problem Link: $link`n * Difficulty: $diff`n * Date Solved: $date`n$extra */`nint main(){}`n" }
+    $r1 = Save-CPSolution -Info (New-CPSolutionInfo -Code (& $mk 'Old One' 'https://codeforces.com/problemset/problem/1/A' '1500' '2026-01-05' '')) -RepoPath $lv -UpdateIndexes
+    $r2 = Save-CPSolution -Info (New-CPSolutionInfo -Code (& $mk 'Starry' 'https://cses.fi/problemset/task/1068' '' '2026-02-01' " * Level: Medium`n * Starred: yes`n")) -RepoPath $lv -UpdateIndexes
+    $r3 = Save-CPSolution -Info (New-CPSolutionInfo -Code (& $mk 'Newest' 'https://leetcode.com/problems/two-sum/' 'Easy' '2026-03-01' '')) -RepoPath $lv -UpdateIndexes
+    $py = "`"`"`"`nProblem Name: Old One`nProblem Link: https://codeforces.com/contest/1/problem/A`nDifficulty: 1500`nDate Solved: 2026-04-01`n`"`"`"`nprint(1)`n"
+    $r4 = Save-CPSolution -Info (New-CPSolutionInfo -Code $py -Extension '.py') -RepoPath $lv -UpdateIndexes
+    Check 'saves with level and star' ($r1.Success -and $r2.Success -and $r3.Success -and $r4.Success)
+    $txt1 = Read-CPTextFile (Join-Path $lv $r1.RelPath)
+    Check 'level written into the header' ($txt1 -match 'Level: Medium')
+    $sols = @(Get-CPAllSolutions $lv)
+    $old = @($sols | Where-Object { $_.Name -eq 'Old One' })
+    Check 'numbers follow the solve order' ((($sols | Where-Object { $_.Name -eq 'Starry' }).Number -eq 2) -and (($sols | Where-Object { $_.Name -eq 'Newest' }).Number -eq 3))
+    Check 'same problem in two languages shares a number' ($old.Count -eq 2 -and $old[0].Number -eq 1 -and $old[1].Number -eq 1)
+    $starry = $sols | Where-Object { $_.Name -eq 'Starry' }
+    Check 'star and hand-written level read back' ($starry.Starred -and $starry.Level -eq 'Medium')
+    # saving again without "Starred" in the header keeps the star and the level chosen by hand
+    $r2b = Save-CPSolution -Info (New-CPSolutionInfo -Code (& $mk 'Starry' 'https://cses.fi/problemset/task/1068' '' '2026-02-01' '').Replace('int main(){}', 'int main(){ return 0; }')) -RepoPath $lv -UpdateIndexes
+    $starry = Get-CPAllSolutions $lv | Where-Object { $_.Name -eq 'Starry' }
+    Check 're-save keeps the star and the level' ($r2b.Success -and $r2b.IsUpdate -and $starry.Starred -and $starry.Level -eq 'Medium')
+    $us = Set-CPStarred -RepoPath $lv -RelPath $starry.RelPath -Starred $false -UpdateIndexes
+    Check 'unstar from the list commits' ($us.Success -and -not (Get-CPAllSolutions $lv | Where-Object { $_.Name -eq 'Starry' }).Starred -and (RunGit $lv log -1 --format=%s) -like 'Unstar *')
+    $ss = Set-CPStarred -RepoPath $lv -RelPath $r3.RelPath -Starred $true -UpdateIndexes
+    $readme = Read-CPTextFile (Join-Path $lv 'README.md')
+    Check 'README lists starred problems and levels' ($ss.Success -and $readme -match '### Starred' -and $readme -match 'By level:')
+    $byDiff = Read-CPTextFile (Join-Path $lv 'Index/BY_DIFFICULTY.md')
+    Check 'difficulty index grouped by level, with numbers' ($byDiff -match '## Medium' -and $byDiff -match '\| # \| Problem')
+    Check 'old headers: "Level: 1500" counts as the difficulty' ((New-CPSolutionInfo -Code "/*`n * Problem Name: X`n * Problem Link: https://x.com/1`n * Level: 1500`n */`n").Difficulty -eq '1500')
+    $rd = Get-CPReportData -RepoPath $lv -Today ([datetime]'2026-03-02')
+    Check 'report data: problems counted once' ($rd.Total -eq 3 -and $rd.Files -eq 4)
+    Check 'report data: streaks' ($rd.LongestStreak -ge 1 -and $rd.CurrentStreak -eq 1)
+    $rp = Save-CPReport -RepoPath $lv -Path (Join-Path $tmp 'report.html')
+    $html = [IO.File]::ReadAllText($rp)
+    Check 'report page is written' ((Test-Path $rp) -and $html -match '<svg' -and $html -match 'Problem solving report' -and $html -match 'Starred')
+    $emptyRepo = Join-Path $tmp 'empty-report'; New-Item -ItemType Directory -Path $emptyRepo | Out-Null; Initialize-CPRepo $emptyRepo | Out-Null
+    $er = $null; try { $er = New-CPReportHtml -RepoPath $emptyRepo } catch { Write-Host "    $($_.Exception.Message)" }
+    Check 'report works with no solutions yet' ($er -and $er -match 'Nothing yet')
 
     if ($Online) {
         Write-Host "`n[11] Online lookups" -ForegroundColor Cyan

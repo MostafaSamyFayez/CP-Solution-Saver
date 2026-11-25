@@ -12,7 +12,7 @@
 # ----------------------------------------------------------------------------
 
 $script:AppName    = 'CPSolutionSaver'
-$script:AppVersion = '2.6.1'
+$script:AppVersion = '2.7.0'
 
 function Get-CPAppVersion { $script:AppVersion }
 
@@ -47,6 +47,9 @@ function Get-CPDefaultConfig {
         BackupsToKeep    = 30
         TutorialShown    = $false    # the welcome tour is shown once, on first run
         AutoUpdateCheck  = $true     # look for a newer release on GitHub now and then (asks before updating)
+        LevelMediumFrom  = 1200      # numeric ratings: below this = Easy
+        LevelHardFrom    = 1800      # ... below this = Medium, this and above = Hard
+        BrowserSort      = 'Num DESC' # last sort in Solved problems (column + ASC/DESC)
         LastUpdateCheck  = ''        # 'yyyy-MM-dd HH:mm' of the last automatic check
         SkippedVersion   = ''        # "Skip this version" in the update window
         ConfigVersion    = 4
@@ -89,6 +92,7 @@ function Get-CPConfig {
     $cfg.PracticeFiles = $list.ToArray()
     $active = Get-CPActivePracticeFile $cfg
     if ($active) { $cfg.MainCppPath = $active }
+    Set-CPLevelCutoffs $cfg
     return $cfg
 }
 
@@ -203,12 +207,80 @@ $script:CanonicalKeys = [ordered]@{
     'problem link' = 'Problem Link'; 'link' = 'Problem Link'; 'url' = 'Problem Link'; 'problem url' = 'Problem Link'
     'platform'     = 'Platform';     'judge' = 'Platform';    'site' = 'Platform'
     'problem id'   = 'Problem ID';   'id' = 'Problem ID'
-    'difficulty'   = 'Difficulty';   'rating' = 'Difficulty'; 'level' = 'Difficulty'
+    'difficulty'   = 'Difficulty';   'rating' = 'Difficulty'
+    'level'        = 'Level'
+    'starred'      = 'Starred';      'star' = 'Starred';      'favorite' = 'Starred'; 'favourite' = 'Starred'
     'topics'       = 'Topics';       'topic' = 'Topics';      'tags' = 'Topics'; 'tag' = 'Topics'
     'date solved'  = 'Date Solved';  'date' = 'Date Solved';  'solved' = 'Date Solved'
     'notes'        = 'Notes';        'note' = 'Notes';        'comments' = 'Notes'
 }
-$script:HeaderOrder = @('Problem Name', 'Problem Link', 'Platform', 'Problem ID', 'Difficulty', 'Topics', 'Date Solved', 'Notes')
+$script:HeaderOrder = @('Problem Name', 'Problem Link', 'Platform', 'Problem ID', 'Difficulty', 'Level', 'Topics', 'Date Solved', 'Starred', 'Notes')
+
+# ----------------------------------------------------------------------------
+#  Level (Easy / Medium / Hard) and stars
+# ----------------------------------------------------------------------------
+#  Level comes from the header's "Level:" when set, otherwise from the difficulty: LeetCode-style
+#  words are used as they are, numeric ratings (Codeforces style) are grouped by two cut-offs.
+$script:LevelMediumFrom = 1200
+$script:LevelHardFrom = 1800
+
+function Set-CPLevelCutoffs {
+    <# Uses the config's cut-offs (LevelMediumFrom / LevelHardFrom) for numeric ratings. #>
+    param($Config)
+    if ($Config -and [int]$Config.LevelMediumFrom -gt 0) { $script:LevelMediumFrom = [int]$Config.LevelMediumFrom }
+    if ($Config -and [int]$Config.LevelHardFrom -gt 0) { $script:LevelHardFrom = [int]$Config.LevelHardFrom }
+}
+
+function ConvertTo-CPLevelName([string]$Text) {
+    <# 'easy' / 'Medium ' / 'HARD' -> 'Easy' / 'Medium' / 'Hard'; anything else -> '' #>
+    switch -Regex (([string]$Text).Trim()) {
+        '^(?i)(easy|beginner|basic|school)$' { return 'Easy' }
+        '^(?i)(medium|mid|intermediate)$'    { return 'Medium' }
+        '^(?i)(hard|expert|difficult)$'      { return 'Hard' }
+    }
+    return ''
+}
+
+function Get-CPRatingNumber([string]$Difficulty) {
+    <# The numeric rating in a difficulty ("1200", "Rating 1200", "r1200") or 0. #>
+    $m = [regex]::Match(([string]$Difficulty).Trim(), '^(?:rating\s*:?\s*|r\s*)?(\d{3,4})$', 'IgnoreCase')
+    if ($m.Success) { return [int]$m.Groups[1].Value }
+    return 0
+}
+
+function Get-CPLevel {
+    <# Easy / Medium / Hard from a difficulty: words as they are, ratings by the cut-offs; '' if unknown. #>
+    param([string]$Difficulty, [string]$Level = '')
+    $l = ConvertTo-CPLevelName $Level
+    if ($l) { return $l }
+    $w = ConvertTo-CPLevelName $Difficulty
+    if ($w) { return $w }
+    $n = Get-CPRatingNumber $Difficulty
+    if ($n -ge 100) {
+        if ($n -lt $script:LevelMediumFrom) { return 'Easy' }
+        if ($n -lt $script:LevelHardFrom) { return 'Medium' }
+        return 'Hard'
+    }
+    return ''
+}
+
+function Get-CPLevelRank([string]$Level) {
+    switch ($Level) { 'Easy' { return 1 } 'Medium' { return 2 } 'Hard' { return 3 } }
+    return 9
+}
+
+function Get-CPDifficultySortKey {
+    <# Sorts by level, then rating, then text: Easy 800 < Easy 1100 < Medium < Hard < unrated. #>
+    param([string]$Difficulty, [string]$Level = '')
+    $lv = Get-CPLevel -Difficulty $Difficulty -Level $Level
+    return ('{0}{1:D5}{2}' -f (Get-CPLevelRank $lv), (Get-CPRatingNumber $Difficulty), ([string]$Difficulty).ToLowerInvariant())
+}
+
+function Test-CPTruthy([string]$Value) {
+    <# "yes" / "true" / "1" / "*" / "y" -> $true #>
+    return (([string]$Value).Trim() -match '^(?i)(yes|y|true|1|\*|x)$')
+}
+
 
 function Get-CPCanonicalKey([string]$Key) {
     $k = ($Key.Trim() -replace '\s+', ' ').ToLowerInvariant()
@@ -327,7 +399,7 @@ function ConvertTo-CPHeader {
     $keys += @($Fields.Keys | Where-Object { $script:HeaderOrder -notcontains $_ })
     foreach ($k in $keys) {
         $v = [string]$Fields[$k]
-        if ($v -eq '' -and $k -notin @('Problem Name', 'Problem Link', 'Topics', 'Difficulty', 'Notes')) { continue }
+        if ($v -eq '' -and $k -notin @('Problem Name', 'Problem Link', 'Topics', 'Difficulty', 'Level', 'Notes')) { continue }
         $parts = $v -split "\r?\n"
         $lines.Add(("{0}{1}: {2}" -f $lead, $k, $parts[0]).TrimEnd())
         for ($i = 1; $i -lt $parts.Count; $i++) { $lines.Add(($cont + $parts[$i]).TrimEnd()) }
@@ -608,7 +680,8 @@ function New-CPSolutionInfo {
     <#
       Combines the header of the code with online metadata into everything
       needed to save the solution. Returns a hashtable:
-        Name, Link, Platform, Id, Difficulty, Topics (string[]), Notes,
+        Name, Link, Platform, Id, Difficulty, Level (as written, may be ''),
+        LevelSet, Starred, StarredSet, Topics (string[]), Notes,
         DateSolved, DateAuto, Extra (other header fields), Body, Newline,
         Prefix, Ext, Language, Style, Key, FileBase, RelPath,
         Metadata (fetch result or $null)
@@ -632,6 +705,10 @@ function New-CPSolutionInfo {
         Platform   = _get 'Platform'
         Id         = _get 'Problem ID'
         Difficulty = _get 'Difficulty'
+        Level      = ConvertTo-CPLevelName (_get 'Level')
+        LevelSet   = $false
+        Starred    = (Test-CPTruthy (_get 'Starred'))
+        StarredSet = $f.Contains('Starred')
         Topics     = @(Merge-CPTopics @(,(_get 'Topics')))
         Notes      = _get 'Notes'
         DateSolved = _get 'Date Solved'
@@ -646,6 +723,9 @@ function New-CPSolutionInfo {
         Style      = $lang.Style
         Metadata   = $null
     }
+    # "Level: 1500" (older headers used Level for the rating) counts as the difficulty
+    if (-not $info.Difficulty -and $f.Contains('Level') -and -not $info.Level -and (Get-CPRatingNumber (_get 'Level'))) { $info.Difficulty = _get 'Level' }
+    $info.LevelSet = [bool]$info.Level
     foreach ($k in $f.Keys) { if ($script:HeaderOrder -notcontains $k) { $info.Extra[$k] = $f[$k] } }
     foreach ($k in $Overrides.Keys) { $info[$k] = $Overrides[$k] }
 
@@ -694,9 +774,11 @@ function ConvertTo-CPSolutionText {
         'Platform'     = $Info.Platform
         'Problem ID'   = $Info.Id
         'Difficulty'   = $Info.Difficulty
+        'Level'        = (Get-CPLevel -Difficulty $Info.Difficulty -Level $Info.Level)
         'Topics'       = (@($Info.Topics) -join ', ')
         'Date Solved'  = $Info.DateSolved
     }
+    if ($Info.Starred) { $fields['Starred'] = 'yes' }
     foreach ($k in $Info.Extra.Keys) { $fields[$k] = $Info.Extra[$k] }
     $fields['Notes'] = $Info.Notes
     $nl = $Info.Newline
@@ -745,6 +827,9 @@ function Get-CPAllSolutions {
         $plat = if ($f.Contains('Platform') -and $f['Platform']) { $f['Platform'] } else { ($rel -split '/')[0] }
         if ($rel -notmatch '/') { $plat = (Get-CPPlatformInfo $link).Platform }
         $lang = Get-CPLanguage $file.Extension
+        $diff = if ($f.Contains('Difficulty')) { [string]$f['Difficulty'] } else { '' }
+        $lvlText = if ($f.Contains('Level')) { [string]$f['Level'] } else { '' }
+        if (-not $diff -and (Get-CPRatingNumber $lvlText)) { $diff = $lvlText }
         $item = ([pscustomobject]@{
             RelPath    = $rel
             Name       = $name
@@ -752,7 +837,10 @@ function Get-CPAllSolutions {
             Key        = (Get-CPProblemKey $link)
             Platform   = $plat
             Id         = $(if ($f.Contains('Problem ID')) { $f['Problem ID'] } else { '' })
-            Difficulty = $(if ($f.Contains('Difficulty')) { $f['Difficulty'] } else { '' })
+            Difficulty = $diff
+            Level      = (Get-CPLevel -Difficulty $diff -Level $lvlText)
+            Starred    = $(if ($f.Contains('Starred')) { Test-CPTruthy $f['Starred'] } else { $false })
+            Number     = 0
             Topics     = @(Merge-CPTopics @(,$(if ($f.Contains('Topics')) { $f['Topics'] } else { '' })))
             DateSolved = $(if ($f.Contains('Date Solved')) { $f['Date Solved'] } else { $file.LastWriteTime.ToString('yyyy-MM-dd') })
             Notes      = $(if ($f.Contains('Notes')) { $f['Notes'] } else { '' })
@@ -763,7 +851,27 @@ function Get-CPAllSolutions {
         $script:SolutionCache[$ck] = @{ Stamp = $stamp; Item = $item }
         $list.Add($item)
     }
-    return $list.ToArray()
+    $arr = $list.ToArray()
+    Set-CPSolutionNumbers $arr
+    return $arr
+}
+
+function Set-CPSolutionNumbers {
+    <# Numbers problems in the order they were first solved: #1 is the first. The same problem in
+       two languages shares one number. Ties (same date) go by path. #>
+    param([object[]]$Solutions)
+    $first = @{}
+    foreach ($s in $Solutions) {
+        $k = if ($s.Key) { $s.Key } else { 'path:' + $s.RelPath.ToLowerInvariant() }
+        $v = "$($s.DateSolved)|$($s.RelPath)"
+        if (-not $first.ContainsKey($k) -or [string]::CompareOrdinal($v, $first[$k]) -lt 0) { $first[$k] = $v }
+    }
+    $order = @{}; $i = 0
+    foreach ($k in ($first.Keys | Sort-Object { $first[$_] })) { $i++; $order[$k] = $i }
+    foreach ($s in $Solutions) {
+        $k = if ($s.Key) { $s.Key } else { 'path:' + $s.RelPath.ToLowerInvariant() }
+        $s.Number = $order[$k]
+    }
 }
 
 function Find-CPSolvedBefore {
@@ -821,13 +929,14 @@ function Format-CPMd([string]$s) { ($s -replace '\|', '\|' -replace "\r?\n", ' '
 function Format-CPRow {
     param($s, [string]$Prefix)
     $prob = if ($s.Link) { "[{0}]({1})" -f (Format-CPMd $s.Name), $s.Link } else { Format-CPMd $s.Name }
+    if ($s.Starred) { $prob = [string][char]0x2605 + ' ' + $prob }
     $solPath = (($s.RelPath -split '/') | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
     $sol = "[{0}]({1}{2})" -f ($s.RelPath -split '/')[-1], $Prefix, $solPath
     $topics = (@($s.Topics) | ForEach-Object { $_.ToLowerInvariant() }) -join ', '
-    return "| {0} | {1} | {2} | {3} | {4} | {5} |" -f $prob, (Format-CPMd $s.Platform), (Format-CPMd $s.Difficulty), (Format-CPMd $topics), $sol, $s.DateSolved
+    return "| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} |" -f $s.Number, $prob, (Format-CPMd $s.Platform), (Format-CPMd $s.Difficulty), $s.Level, (Format-CPMd $topics), $sol, $s.DateSolved
 }
 
-$script:TableHead = "| Problem | Platform | Difficulty | Topics | Solution | Solved |`n|---|---|---|---|---|---|"
+$script:TableHead = "| # | Problem | Platform | Difficulty | Level | Topics | Solution | Solved |`n|---|---|---|---|---|---|---|---|"
 
 function Update-CPIndexes {
     <# Regenerates the README stats section and the Index/*.md files. Returns the list of changed paths (relative). #>
@@ -844,7 +953,7 @@ function Update-CPIndexes {
     foreach ($g in $byPlat) { [void]$sb.AppendLine("- [$($g.Name)](#$(($g.Name.ToLowerInvariant() -replace '[^a-z0-9 -]', '' -replace ' ', '-'))) ($($g.Count))") }
     foreach ($g in $byPlat) {
         [void]$sb.AppendLine("`n## $($g.Name)`n`n$script:TableHead")
-        foreach ($s in ($g.Group | Sort-Object { (Get-CPDifficultyGroup $_.Difficulty).SortKey }, Name)) { [void]$sb.AppendLine((Format-CPRow $s '../')) }
+        foreach ($s in ($g.Group | Sort-Object { Get-CPDifficultySortKey $_.Difficulty $_.Level }, Name)) { [void]$sb.AppendLine((Format-CPRow $s '../')) }
     }
     Write-CPTextFile -Path (Join-Path $indexDir 'BY_PLATFORM.md') -Text $sb.ToString()
 
@@ -865,20 +974,19 @@ function Update-CPIndexes {
     foreach ($t in $topicNames) { [void]$sb.AppendLine("- [$t](#$(($t -replace '[^a-z0-9 -]', '' -replace ' ', '-'))) ($($topicMap[$t].Count))") }
     foreach ($t in $topicNames) {
         [void]$sb.AppendLine("`n## $t`n`n$script:TableHead")
-        foreach ($s in ($topicMap[$t] | Sort-Object { (Get-CPDifficultyGroup $_.Difficulty).SortKey }, Name)) { [void]$sb.AppendLine((Format-CPRow $s '../')) }
+        foreach ($s in ($topicMap[$t] | Sort-Object { Get-CPDifficultySortKey $_.Difficulty $_.Level }, Name)) { [void]$sb.AppendLine((Format-CPRow $s '../')) }
     }
     Write-CPTextFile -Path (Join-Path $indexDir 'BY_TOPIC.md') -Text $sb.ToString()
 
     # --- by difficulty
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine("# Solutions by difficulty`n`n$gen`n")
-    [void]$sb.AppendLine("Numbers are Codeforces-style ratings; Easy/Medium/Hard come from LeetCode or your own header.`n")
-    $byDiff = $all | Group-Object { (Get-CPDifficultyGroup $_.Difficulty).Label } |
-        Sort-Object { (Get-CPDifficultyGroup ($_.Group[0].Difficulty)).SortKey }
+    [void]$sb.AppendLine("Level: Easy / Medium / Hard from LeetCode, your header, or the rating (under $script:LevelMediumFrom Easy, under $script:LevelHardFrom Medium, else Hard). Within a level: by rating.`n")
+    $byDiff = $all | Group-Object { if ($_.Level) { $_.Level } else { 'Unrated' } } | Sort-Object { Get-CPLevelRank $_.Name }
     foreach ($g in $byDiff) { [void]$sb.AppendLine("- [$($g.Name)](#$(($g.Name.ToLowerInvariant() -replace '[^a-z0-9 -]', '' -replace ' ', '-'))) ($($g.Count))") }
     foreach ($g in $byDiff) {
         [void]$sb.AppendLine("`n## $($g.Name)`n`n$script:TableHead")
-        foreach ($s in ($g.Group | Sort-Object Platform, Name)) { [void]$sb.AppendLine((Format-CPRow $s '../')) }
+        foreach ($s in ($g.Group | Sort-Object { Get-CPRatingNumber $_.Difficulty }, Platform, Name)) { [void]$sb.AppendLine((Format-CPRow $s '../')) }
     }
     Write-CPTextFile -Path (Join-Path $indexDir 'BY_DIFFICULTY.md') -Text $sb.ToString()
 
@@ -896,6 +1004,14 @@ function Update-CPIndexes {
         if ($topTopics.Count) {
             [void]$st.AppendLine("**Top topics:** " + (($topTopics | ForEach-Object { "$_ ($($topicMap[$_].Count))" }) -join (' ' + [char]0x00B7 + ' ')) + "`n")
         }
+        $lv = @{}; foreach ($s in $all) { $k = if ($s.Level) { $s.Level } else { 'Unrated' }; $lv[$k] = 1 + [int]$lv[$k] }
+        [void]$st.AppendLine("**By level:** " + ((@('Easy', 'Medium', 'Hard', 'Unrated') | Where-Object { $lv[$_] } | ForEach-Object { "$_ $($lv[$_])" }) -join (' ' + [char]0x00B7 + ' ')) + "`n")
+        $stars = @($all | Where-Object { $_.Starred } | Sort-Object Number)
+        if ($stars.Count) {
+            [void]$st.AppendLine("### Starred`n`n$script:TableHead")
+            foreach ($s in $stars) { [void]$st.AppendLine((Format-CPRow $s '')) }
+            [void]$st.AppendLine('')
+        }
         [void]$st.AppendLine("### Recently solved`n`n$script:TableHead")
         foreach ($s in ($all | Select-Object -First 10)) { [void]$st.AppendLine((Format-CPRow $s '')) }
     }
@@ -912,6 +1028,40 @@ function Update-CPIndexes {
     $readme = $readme -replace "\r\n", "`n"
     Write-CPTextFile -Path $readmePath -Text $readme
     return @('README.md', 'Index/BY_PLATFORM.md', 'Index/BY_TOPIC.md', 'Index/BY_DIFFICULTY.md')
+}
+
+function Set-CPHeaderField {
+    <# Sets one header field of a saved solution file (an empty value removes it). The code is not touched. #>
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Field, [AllowEmptyString()][string]$Value = '')
+    $text = Read-CPTextFile $Path
+    $h = Read-CPHeader $text
+    if (-not $h.HasHeader) { throw "No problem header in $Path" }
+    $fields = [ordered]@{}
+    foreach ($k in $h.Fields.Keys) { $fields[$k] = $h.Fields[$k] }
+    if ($Value) { $fields[$Field] = $Value } elseif ($fields.Contains($Field)) { $fields.Remove($Field) }
+    $body = $h.Body -replace '^(\s*\r?\n)+', ''
+    $new = ([string]$h.Prefix) + (ConvertTo-CPHeader -Fields $fields -Newline $h.Newline -Style $h.Style) + $h.Newline + $h.Newline + $body
+    Write-CPTextFile -Path $Path -Text $new
+}
+
+function Set-CPStarred {
+    <# Stars / unstars a saved solution: edits its header, refreshes the indexes, commits, pushes if
+       -Push and a remote exists. Returns @{ Success; Pushed; Message }. #>
+    param([Parameter(Mandatory)][string]$RepoPath, [Parameter(Mandatory)][string]$RelPath, [bool]$Starred = $true, [switch]$Push, [switch]$UpdateIndexes)
+    $full = Join-Path $RepoPath $RelPath
+    if (-not (Test-Path -LiteralPath $full)) { return @{ Success = $false; Pushed = $false; Message = "File not found: $RelPath" } }
+    Set-CPHeaderField -Path $full -Field 'Starred' -Value $(if ($Starred) { 'yes' } else { '' })
+    $paths = @($RelPath)
+    if ($UpdateIndexes) { $paths += @(Update-CPIndexes -RepoPath $RepoPath) }
+    if ((Test-CPRepoFolder $RepoPath) -ne 'repo') { return @{ Success = $true; Pushed = $false; Message = 'Saved (the folder is not a git repo).' } }
+    Invoke-CPGit $RepoPath add -- @($paths) | Out-Null
+    if ((Invoke-CPGit $RepoPath diff --cached --quiet).Code -eq 0) { return @{ Success = $true; Pushed = $false; Message = 'No change.' } }
+    $name = [IO.Path]::GetFileNameWithoutExtension($RelPath)
+    $c = Invoke-CPGit $RepoPath commit -q -m $(if ($Starred) { "Star $name" } else { "Unstar $name" })
+    if ($c.Code -ne 0) { return @{ Success = $false; Pushed = $false; Message = "git commit failed: $($c.Output)" } }
+    $pushed = $false
+    if ($Push -and (Invoke-CPGit $RepoPath remote).Output) { $pushed = ((Invoke-CPGit $RepoPath push -q).Code -eq 0) }
+    return @{ Success = $true; Pushed = $pushed; Message = $(if ($pushed) { 'Committed and pushed.' } else { 'Committed.' }) }
 }
 
 # ----------------------------------------------------------------------------
@@ -1051,6 +1201,9 @@ function Save-CPSolution {
             try {
                 $old = Read-CPHeader (Read-CPTextFile (Join-Path $RepoPath $existing))
                 if ($Info.DateAuto -and $old.Fields.Contains('Date Solved') -and $old.Fields['Date Solved']) { $Info.DateSolved = [string]$old.Fields['Date Solved'] }
+                # keep the star, and a level chosen by hand, unless this save says otherwise
+                if (-not $Info.StarredSet -and $old.Fields.Contains('Starred') -and (Test-CPTruthy $old.Fields['Starred'])) { $Info.Starred = $true }
+                if (-not $Info.LevelSet -and -not (Get-CPLevel -Difficulty $Info.Difficulty) -and $old.Fields.Contains('Level')) { $Info.Level = ConvertTo-CPLevelName $old.Fields['Level'] }
                 if ($old.Fields.Contains('Problem Link') -and $old.Fields['Problem Link'] -and (Get-CPProblemKey $old.Fields['Problem Link']) -eq (Get-CPProblemKey $Info.Link)) { $Info.Link = [string]$old.Fields['Problem Link'] }
             } catch { }
         }
@@ -1528,6 +1681,7 @@ function Invoke-CPQuickSave {
     #>
     param([Parameter(Mandatory)]$Config, [scriptblock]$Log)
     $out = @{ Success = $false; Title = 'Quick save failed'; Summary = @(); Log = @(); RelPath = ''; LogFile = (Join-Path (Get-CPDataDir) 'last-quick-save.log') }
+    Set-CPLevelCutoffs $Config
     $lines = New-Object System.Collections.Generic.List[string]
     $qsLog = $Log
     # GetNewClosure: Save-CPSolution has its own $Log parameter, so the callback must not look $Log up dynamically
@@ -1709,6 +1863,387 @@ function Get-CPRepoWebUrl {
     if ($u -notmatch '^https?://') { return $null }          # a local folder remote has no web page
     $u = $u -replace '^(https?://)[^/@]+@', '$1'             # drop a user name in the URL
     return $u
+}
+
+# ----------------------------------------------------------------------------
+#  Analytics report (an HTML page with SVG charts, built from the solutions folder)
+# ----------------------------------------------------------------------------
+#  Everything comes from the solution headers, so all problems saved so far (by any version) count.
+#  Colors follow a validated palette: one blue ramp for magnitude, fixed categorical order for levels.
+
+function ConvertTo-CPHtml([string]$Text) { return [System.Net.WebUtility]::HtmlEncode([string]$Text) }
+
+function Format-CPNum([double]$n) { return $n.ToString('0.#', [Globalization.CultureInfo]::InvariantCulture) }
+
+function Get-CPReportData {
+    <# Everything the report shows, as a hashtable (also handy for tests). One entry per problem:
+       the same problem saved in two languages counts once. #>
+    param([Parameter(Mandatory)][string]$RepoPath, [datetime]$Today = (Get-Date).Date)
+    $all = @(Get-CPAllSolutions $RepoPath)
+    $byNum = @{}
+    foreach ($s in $all) {
+        $n = [int]$s.Number
+        if (-not $byNum.ContainsKey($n)) { $byNum[$n] = New-Object System.Collections.Generic.List[object] }
+        $byNum[$n].Add($s)
+    }
+    $problems = New-Object System.Collections.Generic.List[object]
+    foreach ($n in ($byNum.Keys | Sort-Object)) {
+        $g = @($byNum[$n] | Sort-Object DateSolved, RelPath)
+        $p = $g[0]
+        $d = [datetime]::MinValue
+        $ok = [datetime]::TryParseExact([string]$p.DateSolved, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, 'None', [ref]$d)
+        $lvl = ($g | Where-Object { $_.Level } | Select-Object -First 1).Level
+        $problems.Add([pscustomobject]@{
+            Number = $n; Name = $p.Name; Link = $p.Link; Platform = $p.Platform; Difficulty = $p.Difficulty
+            Rating = (Get-CPRatingNumber $p.Difficulty); Level = $(if ($lvl) { $lvl } else { '' })
+            Topics = @($g | ForEach-Object { $_.Topics } | ForEach-Object { $_.ToLowerInvariant() } | Select-Object -Unique)
+            Date = $(if ($ok) { $d.Date } else { $null }); DateText = $p.DateSolved
+            Starred = [bool](@($g | Where-Object { $_.Starred }).Count); Languages = @($g | ForEach-Object { $_.Language } | Select-Object -Unique)
+            RelPath = $p.RelPath
+        })
+    }
+    $dated = @($problems | Where-Object { $_.Date })
+    $perDay = @{}
+    foreach ($p in $dated) { $k = $p.Date.ToString('yyyy-MM-dd'); $perDay[$k] = 1 + [int]$perDay[$k] }
+    # streaks (days in a row with at least one problem)
+    $cur = 0; $d = $Today
+    if (-not $perDay.ContainsKey($d.ToString('yyyy-MM-dd'))) { $d = $d.AddDays(-1) }
+    while ($perDay.ContainsKey($d.ToString('yyyy-MM-dd'))) { $cur++; $d = $d.AddDays(-1) }
+    $best = 0; $run = 0; $prev = $null
+    foreach ($k in ($perDay.Keys | Sort-Object)) {
+        $dd = [datetime]::ParseExact($k, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+        if ($prev -and ($dd - $prev).TotalDays -eq 1) { $run++ } else { $run = 1 }
+        if ($run -gt $best) { $best = $run }
+        $prev = $dd
+    }
+    $monthStart = New-Object datetime($Today.Year, $Today.Month, 1)
+    return @{
+        Today = $Today; Files = $all.Count; Problems = $problems.ToArray(); PerDay = $perDay
+        Total = $problems.Count
+        Week = @($dated | Where-Object { $_.Date -gt $Today.AddDays(-7) }).Count
+        Month = @($dated | Where-Object { $_.Date -ge $monthStart }).Count
+        ActiveDays = $perDay.Count; CurrentStreak = $cur; LongestStreak = $best
+        Languages = @($all | Group-Object Language | Sort-Object Count -Descending | ForEach-Object { @{ Label = $_.Name; Value = $_.Count } })
+    }
+}
+
+# --- small SVG chart helpers (each returns an <svg> string) ----------------------------------
+
+function New-CPSvgHBars {
+    <# Horizontal bars: rows of @{ Label; Value; Color; Tip }. Value labels at the bar ends. #>
+    param([object[]]$Rows, [int]$Width = 520, [int]$LabelWidth = 150, [string]$Unit = '')
+    $rows = @($Rows)
+    if ($rows.Count -eq 0) { return '<p class="empty">Nothing yet.</p>' }
+    $max = [double](($rows | Measure-Object -Property Value -Maximum).Maximum); if ($max -le 0) { $max = 1 }
+    $rowH = 24; $barH = 14; $plotW = $Width - $LabelWidth - 50
+    $h = $rows.Count * $rowH + 4
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append("<svg class=""chart"" viewBox=""0 0 $Width $h"" width=""100%"" role=""img"">")
+    for ($i = 0; $i -lt $rows.Count; $i++) {
+        $r = $rows[$i]; $y = $i * $rowH + 4
+        $w = [Math]::Max(2, [Math]::Round($plotW * [double]$r.Value / $max, 1))
+        $col = if ($r.Color) { $r.Color } else { 'var(--series-1)' }
+        $tip = if ($r.Tip) { $r.Tip } else { "$($r.Label): $($r.Value)$Unit" }
+        [void]$sb.Append("<g><title>$(ConvertTo-CPHtml $tip)</title>")
+        [void]$sb.Append("<rect x=""0"" y=""$($y - 2)"" width=""$Width"" height=""$rowH"" fill=""transparent""/>")
+        [void]$sb.Append("<text x=""$($LabelWidth - 8)"" y=""$($y + 11)"" class=""lbl"" text-anchor=""end"">$(ConvertTo-CPHtml $r.Label)</text>")
+        [void]$sb.Append("<rect x=""$LabelWidth"" y=""$y"" width=""$w"" height=""$barH"" rx=""4"" fill=""$col""/>")
+        [void]$sb.Append("<text x=""$($LabelWidth + $w + 6)"" y=""$($y + 11)"" class=""val"">$($r.Value)$Unit</text></g>")
+    }
+    [void]$sb.Append('</svg>')
+    return $sb.ToString()
+}
+
+function New-CPSvgColumns {
+    <# Vertical columns: @{ Label; Value; Tip }. -LabelEvery thins the x labels. #>
+    param([object[]]$Cols, [int]$Width = 560, [int]$Height = 190, [int]$LabelEvery = 1, [string]$Color = 'var(--series-1)')
+    $cols = @($Cols)
+    if ($cols.Count -eq 0) { return '<p class="empty">Nothing yet.</p>' }
+    $max = [double](($cols | Measure-Object -Property Value -Maximum).Maximum); if ($max -le 0) { $max = 1 }
+    $left = 30; $bottom = 24; $top = 14; $plotW = $Width - $left - 6; $plotH = $Height - $bottom - $top
+    $step = $plotW / $cols.Count; $bw = [Math]::Max(3, [Math]::Min(28, $step - 2))
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append("<svg class=""chart"" viewBox=""0 0 $Width $Height"" width=""100%"" role=""img"">")
+    $tick = [Math]::Max(1, [Math]::Ceiling($max / 4))
+    for ($t = 0; $t -le $max; $t += $tick) {
+        $y = [Math]::Round($top + $plotH - $plotH * $t / $max, 1)
+        [void]$sb.Append("<line x1=""$left"" x2=""$Width"" y1=""$y"" y2=""$y"" class=""grid""/><text x=""$($left - 6)"" y=""$($y + 4)"" class=""tick"" text-anchor=""end"">$t</text>")
+    }
+    $maxI = 0; for ($i = 1; $i -lt $cols.Count; $i++) { if ($cols[$i].Value -gt $cols[$maxI].Value) { $maxI = $i } }
+    for ($i = 0; $i -lt $cols.Count; $i++) {
+        $c = $cols[$i]
+        $x = [Math]::Round($left + $i * $step + ($step - $bw) / 2, 1)
+        $bh = [Math]::Round($plotH * [double]$c.Value / $max, 1)
+        $y = $top + $plotH - $bh
+        $tip = if ($c.Tip) { $c.Tip } else { "$($c.Label): $($c.Value)" }
+        [void]$sb.Append("<g><title>$(ConvertTo-CPHtml $tip)</title><rect x=""$([Math]::Round($left + $i * $step, 1))"" y=""$top"" width=""$([Math]::Round($step, 1))"" height=""$plotH"" fill=""transparent""/>")
+        if ($c.Value -gt 0) {
+            # rounded top, square at the baseline
+            $r = [Math]::Min(4, [Math]::Min($bw / 2, $bh))
+            [void]$sb.Append("<path d=""M$x,$($top + $plotH) V$($y + $r) Q$x,$y $($x + $r),$y H$($x + $bw - $r) Q$($x + $bw),$y $($x + $bw),$($y + $r) V$($top + $plotH) Z"" fill=""$Color""/>")
+        }
+        if ($i -eq $maxI -and $c.Value -gt 0) { [void]$sb.Append("<text x=""$($x + $bw / 2)"" y=""$($y - 4)"" class=""val"" text-anchor=""middle"">$($c.Value)</text>") }
+        [void]$sb.Append('</g>')
+        if ($i % $LabelEvery -eq 0) { [void]$sb.Append("<text x=""$($x + $bw / 2)"" y=""$($Height - 6)"" class=""tick"" text-anchor=""middle"">$(ConvertTo-CPHtml $c.Label)</text>") }
+    }
+    [void]$sb.Append("<line x1=""$left"" x2=""$Width"" y1=""$($top + $plotH)"" y2=""$($top + $plotH)"" class=""axis""/></svg>")
+    return $sb.ToString()
+}
+
+function New-CPSvgLine {
+    <# One line (2px) with dots on hover: @{ Label; Value; Tip }. #>
+    param([object[]]$Points, [int]$Width = 560, [int]$Height = 190, [int]$LabelEvery = 1, [double]$MinY = 0)
+    $pts = @($Points)
+    if ($pts.Count -lt 2) { return '<p class="empty">Needs at least two points - keep solving!</p>' }
+    $max = [double](($pts | Measure-Object -Property Value -Maximum).Maximum)
+    if ($MinY -lt 0) { $MinY = [double](($pts | Measure-Object -Property Value -Minimum).Minimum) * 0.9 }
+    if ($max -le $MinY) { $max = $MinY + 1 }
+    $left = 40; $bottom = 24; $top = 14; $plotW = $Width - $left - 10; $plotH = $Height - $bottom - $top
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append("<svg class=""chart"" viewBox=""0 0 $Width $Height"" width=""100%"" role=""img"">")
+    for ($k = 0; $k -le 4; $k++) {
+        $v = $MinY + ($max - $MinY) * $k / 4; $y = [Math]::Round($top + $plotH - $plotH * $k / 4, 1)
+        [void]$sb.Append("<line x1=""$left"" x2=""$Width"" y1=""$y"" y2=""$y"" class=""grid""/><text x=""$($left - 6)"" y=""$($y + 4)"" class=""tick"" text-anchor=""end"">$([Math]::Round($v))</text>")
+    }
+    $xy = @()
+    for ($i = 0; $i -lt $pts.Count; $i++) {
+        $x = [Math]::Round($left + $plotW * $i / ($pts.Count - 1), 1)
+        $y = [Math]::Round($top + $plotH - $plotH * ([double]$pts[$i].Value - $MinY) / ($max - $MinY), 1)
+        $xy += ,@($x, $y)
+    }
+    [void]$sb.Append("<polyline fill=""none"" stroke=""var(--series-1)"" stroke-width=""2"" stroke-linejoin=""round"" points=""$(($xy | ForEach-Object { "$($_[0]),$($_[1])" }) -join ' ')""/>")
+    for ($i = 0; $i -lt $pts.Count; $i++) {
+        $p = $pts[$i]; $tip = if ($p.Tip) { $p.Tip } else { "$($p.Label): $($p.Value)" }
+        [void]$sb.Append("<g class=""pt""><title>$(ConvertTo-CPHtml $tip)</title><rect x=""$($xy[$i][0] - 6)"" y=""$top"" width=""12"" height=""$plotH"" fill=""transparent""/><circle cx=""$($xy[$i][0])"" cy=""$($xy[$i][1])"" r=""4.5"" fill=""var(--series-1)"" stroke=""var(--surface-1)"" stroke-width=""2""/></g>")
+        if ($i % $LabelEvery -eq 0 -or $i -eq $pts.Count - 1) { [void]$sb.Append("<text x=""$($xy[$i][0])"" y=""$($Height - 6)"" class=""tick"" text-anchor=""middle"">$(ConvertTo-CPHtml $p.Label)</text>") }
+    }
+    $last = $pts[$pts.Count - 1]
+    [void]$sb.Append("<text x=""$([Math]::Min($Width - 4, $xy[$pts.Count - 1][0]))"" y=""$($xy[$pts.Count - 1][1] - 10)"" class=""val"" text-anchor=""end"">$($last.Value)</text>")
+    [void]$sb.Append('</svg>')
+    return $sb.ToString()
+}
+
+function New-CPSvgCalendar {
+    <# The last 53 weeks, one square per day (Monday on top), darker = more problems. #>
+    param([hashtable]$PerDay, [datetime]$Today)
+    $ramp = @('var(--empty-cell)', 'var(--heat-1)', 'var(--heat-2)', 'var(--heat-3)', 'var(--heat-4)')
+    $cell = 11; $gap = 3; $left = 28; $top = 18
+    $dow = ([int]$Today.DayOfWeek + 6) % 7                      # 0 = Monday
+    $start = $Today.AddDays(-$dow).AddDays(-52 * 7)
+    $w = $left + 53 * ($cell + $gap); $h = $top + 7 * ($cell + $gap) + 4
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append("<svg class=""chart"" viewBox=""0 0 $w $h"" width=""100%"" role=""img"">")
+    foreach ($r in @(@(0, 'Mon'), @(2, 'Wed'), @(4, 'Fri'))) { [void]$sb.Append("<text x=""0"" y=""$($top + $r[0] * ($cell + $gap) + 9)"" class=""tick"">$($r[1])</text>") }
+    $lastMonth = -1; $lastLabelWk = -10
+    for ($wk = 0; $wk -lt 53; $wk++) {
+        $colDate = $start.AddDays($wk * 7)
+        if ($colDate.Month -ne $lastMonth) {
+            if ($wk -lt 51 -and ($wk - $lastLabelWk) -ge 3) { $lastLabelWk = $wk; [void]$sb.Append("<text x=""$($left + $wk * ($cell + $gap))"" y=""11"" class=""tick"">$($colDate.ToString('MMM', [Globalization.CultureInfo]::InvariantCulture))</text>") }
+            $lastMonth = $colDate.Month
+        }
+        for ($dd = 0; $dd -lt 7; $dd++) {
+            $day = $colDate.AddDays($dd)
+            if ($day -gt $Today) { continue }
+            $k = $day.ToString('yyyy-MM-dd'); $n = [int]$PerDay[$k]
+            $lvl = if ($n -le 0) { 0 } elseif ($n -eq 1) { 1 } elseif ($n -eq 2) { 2 } elseif ($n -le 4) { 3 } else { 4 }
+            $label = $day.ToString('ddd d MMM yyyy', [Globalization.CultureInfo]::InvariantCulture)
+            [void]$sb.Append("<rect x=""$($left + $wk * ($cell + $gap))"" y=""$($top + $dd * ($cell + $gap))"" width=""$cell"" height=""$cell"" rx=""2"" fill=""$($ramp[$lvl])""><title>$label - $n problem$(if ($n -ne 1) { 's' })</title></rect>")
+        }
+    }
+    [void]$sb.Append('</svg>')
+    $legend = '<div class="legend">Less ' + (($ramp | ForEach-Object { "<span class=""sq"" style=""background:$_""></span>" }) -join '') + ' More</div>'
+    return $sb.ToString() + $legend
+}
+
+function ConvertTo-CPReportTable {
+    param([object[]]$Problems, [switch]$ShowStar)
+    $rows = @($Problems)
+    if ($rows.Count -eq 0) { return '<p class="empty">Nothing yet.</p>' }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('<table><thead><tr><th>#</th><th>Problem</th><th>Platform</th><th>Difficulty</th><th>Level</th><th>Solved</th></tr></thead><tbody>')
+    foreach ($p in $rows) {
+        $nm = ConvertTo-CPHtml $p.Name
+        if ($p.Link) { $nm = "<a href=""$(ConvertTo-CPHtml $p.Link)"">$nm</a>" }
+        if ($ShowStar -and $p.Starred) { $nm = '&#9733; ' + $nm }
+        [void]$sb.Append("<tr><td class=""num"">$($p.Number)</td><td>$nm</td><td>$(ConvertTo-CPHtml $p.Platform)</td><td>$(ConvertTo-CPHtml $p.Difficulty)</td><td>$(ConvertTo-CPHtml $p.Level)</td><td>$(ConvertTo-CPHtml $p.DateText)</td></tr>")
+    }
+    [void]$sb.Append('</tbody></table>')
+    return $sb.ToString()
+}
+
+$script:CommonTopics = @('implementation', 'math', 'greedy', 'brute force', 'strings', 'sortings', 'constructive algorithms',
+    'binary search', 'dp', 'data structures', 'number theory', 'two pointers', 'graphs', 'trees', 'dfs and similar',
+    'bitmasks', 'combinatorics', 'prefix sums', 'shortest paths', 'dsu', 'hashing', 'geometry', 'games', 'probabilities')
+
+function New-CPReportHtml {
+    <# The whole report page as HTML text. #>
+    param([Parameter(Mandatory)][string]$RepoPath, [datetime]$Today = (Get-Date).Date)
+    $d = Get-CPReportData -RepoPath $RepoPath -Today $Today
+    $probs = @($d.Problems)
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $levelColor = @{ Easy = 'var(--series-1)'; Medium = 'var(--series-2)'; Hard = 'var(--series-3)'; Unrated = 'var(--unrated)' }
+
+    # cards
+    $cards = @(
+        @('Problems solved', $d.Total, $(if ($d.Files -ne $d.Total) { "$($d.Files) solution files" } else { 'all time' })),
+        @('This week', $d.Week, 'last 7 days'),
+        @('This month', $d.Month, $Today.ToString('MMMM yyyy', $inv)),
+        @('Current streak', $d.CurrentStreak, $(if ($d.CurrentStreak -eq 1) { 'day' } else { 'days in a row' })),
+        @('Longest streak', $d.LongestStreak, 'days'),
+        @('Active days', $d.ActiveDays, 'days with a solve')
+    )
+    $cardHtml = ($cards | ForEach-Object { "<div class=""card stat""><div class=""k"">$($_[0])</div><div class=""v"">$($_[1])</div><div class=""s"">$(ConvertTo-CPHtml $_[2])</div></div>" }) -join ''
+
+    # progress over time: total by week (all history, at most ~60 points) and per week (last 26)
+    $dated = @($probs | Where-Object { $_.Date } | Sort-Object Date)
+    $weekStart = { param($x) $x.AddDays(-(([int]$x.DayOfWeek + 6) % 7)) }
+    $cumPts = @(); $weekCols = @()
+    if ($dated.Count) {
+        $w0 = & $weekStart $dated[0].Date; $wEnd = & $weekStart $Today
+        $weeks = [int](($wEnd - $w0).TotalDays / 7) + 1
+        $stride = [Math]::Max(1, [Math]::Ceiling($weeks / 60))
+        $perWeek = @{}
+        foreach ($p in $dated) { $k = (& $weekStart $p.Date).ToString('yyyy-MM-dd'); $perWeek[$k] = 1 + [int]$perWeek[$k] }
+        $run = 0
+        for ($i = 0; $i -lt $weeks; $i++) {
+            $wd = $w0.AddDays(7 * $i); $run += [int]$perWeek[$wd.ToString('yyyy-MM-dd')]
+            if ($i % $stride -eq 0 -or $i -eq $weeks - 1) { $cumPts += @{ Label = $wd.ToString('d MMM', $inv); Value = $run; Tip = "Week of $($wd.ToString('d MMM yyyy', $inv)): $run solved in total" } }
+        }
+        for ($i = 25; $i -ge 0; $i--) {
+            $wd = $wEnd.AddDays(-7 * $i); $n = [int]$perWeek[$wd.ToString('yyyy-MM-dd')]
+            $weekCols += @{ Label = $wd.ToString('d MMM', $inv); Value = $n; Tip = "Week of $($wd.ToString('d MMM yyyy', $inv)): $n problem$(if ($n -ne 1) { 's' })" }
+        }
+    }
+
+    # levels
+    $levelRows = @()
+    foreach ($l in @('Easy', 'Medium', 'Hard', 'Unrated')) {
+        $n = @($probs | Where-Object { $(if ($_.Level) { $_.Level } else { 'Unrated' }) -eq $l }).Count
+        if ($n -gt 0 -or $l -ne 'Unrated') {
+            $pct = if ($d.Total) { [Math]::Round(100.0 * $n / $d.Total) } else { 0 }
+            $levelRows += @{ Label = $l; Value = $n; Color = $levelColor[$l]; Tip = "${l}: $n problems ($pct%)" }
+        }
+    }
+    # ratings (Codeforces-style numbers) in bands of 100
+    $rated = @($probs | Where-Object { $_.Rating -gt 0 })
+    $bandCols = @()
+    if ($rated.Count) {
+        $lo = [Math]::Floor((($rated | Measure-Object Rating -Minimum).Minimum) / 100) * 100
+        $hi = [Math]::Floor((($rated | Measure-Object Rating -Maximum).Maximum) / 100) * 100
+        for ($b = $lo; $b -le $hi; $b += 100) { $n = @($rated | Where-Object { $_.Rating -ge $b -and $_.Rating -lt $b + 100 }).Count; $bandCols += @{ Label = [string]$b; Value = $n; Tip = "Rating ${b}: $n problems" } }
+    }
+    # average rating by month
+    $avgPts = @()
+    foreach ($g in ($rated | Where-Object { $_.Date } | Group-Object { $_.Date.ToString('yyyy-MM') } | Sort-Object Name)) {
+        $avg = [Math]::Round(($g.Group | Measure-Object Rating -Average).Average)
+        $md = [datetime]::ParseExact($g.Name + '-01', 'yyyy-MM-dd', $inv)
+        $avgPts += @{ Label = $md.ToString('MMM yy', $inv); Value = $avg; Tip = "$($md.ToString('MMMM yyyy', $inv)): average rating $avg over $($g.Count) problem$(if ($g.Count -ne 1) { 's' })" }
+    }
+    # topics
+    $topicCount = @{}
+    foreach ($p in $probs) { foreach ($t in $p.Topics) { if ($t) { $topicCount[$t] = 1 + [int]$topicCount[$t] } } }
+    $topTopics = @($topicCount.Keys | Sort-Object { -$topicCount[$_] }, { $_ } | Select-Object -First 15)
+    $topicRows = @($topTopics | ForEach-Object { @{ Label = $_; Value = $topicCount[$_] } })
+    $few = @($topicCount.Keys | Where-Object { $topicCount[$_] -le 2 } | Sort-Object)
+    $missing = @($script:CommonTopics | Where-Object { -not $topicCount.ContainsKey($_) })
+    # topic x level
+    $matrixTopics = @($topTopics | Select-Object -First 12)
+    $mx = New-Object System.Text.StringBuilder
+    if ($matrixTopics.Count) {
+        $cellMax = 1
+        $cellsData = @{}
+        foreach ($t in $matrixTopics) { foreach ($l in @('Easy', 'Medium', 'Hard', 'Unrated')) {
+            $n = @($probs | Where-Object { $_.Topics -contains $t -and $(if ($_.Level) { $_.Level } else { 'Unrated' }) -eq $l }).Count
+            $cellsData["$t|$l"] = $n; if ($n -gt $cellMax) { $cellMax = $n } } }
+
+        [void]$mx.Append('<table class="matrix"><thead><tr><th>Topic</th><th>Easy</th><th>Medium</th><th>Hard</th><th>Unrated</th></tr></thead><tbody>')
+        foreach ($t in $matrixTopics) {
+            [void]$mx.Append("<tr><td>$(ConvertTo-CPHtml $t)</td>")
+            foreach ($l in @('Easy', 'Medium', 'Hard', 'Unrated')) {
+                $n = $cellsData["$t|$l"]
+                $si = if ($n -le 0) { 0 } else { [Math]::Min(5, 1 + [Math]::Floor(4.999 * ($n - 1) / [Math]::Max(1, $cellMax - 1))) }
+                [void]$mx.Append("<td class=""cell m$si"" title=""$(ConvertTo-CPHtml $t), ${l}: $n"">$(if ($n) { $n } else { '' })</td>")
+            }
+            [void]$mx.Append('</tr>')
+        }
+        [void]$mx.Append('</tbody></table>')
+    }
+    $platRows = @($probs | Group-Object Platform | Sort-Object Count -Descending | ForEach-Object { @{ Label = $_.Name; Value = $_.Count } })
+    $langRows = @($d.Languages | ForEach-Object { @{ Label = $_.Label; Value = $_.Value; Tip = "$($_.Label): $($_.Value) solution files" } })
+
+    $hardest = @($probs | Sort-Object @{ Expression = { $_.Rating }; Descending = $true }, @{ Expression = { Get-CPLevelRank $_.Level }; Descending = $true }, Number | Where-Object { $_.Rating -gt 0 -or $_.Level -eq 'Hard' } | Select-Object -First 10)
+    $stars = @($probs | Where-Object { $_.Starred } | Sort-Object Number)
+    $recent = @($probs | Sort-Object @{ Expression = { $_.DateText }; Descending = $true }, @{ Expression = { $_.Number }; Descending = $true } | Select-Object -First 10)
+
+    $repoName = Split-Path ((Resolve-Path -LiteralPath $RepoPath).ProviderPath) -Leaf
+    $practice = ''
+    if ($few.Count -or $missing.Count) {
+        $practice = '<div class="hint"><b>Practice next.</b> '
+        if ($few.Count) { $practice += 'Only 1-2 problems so far: ' + (($few | Select-Object -First 14 | ForEach-Object { ConvertTo-CPHtml $_ }) -join ', ') + '. ' }
+        if ($missing.Count) { $practice += 'Common topics not tried yet: ' + (($missing | Select-Object -First 14 | ForEach-Object { ConvertTo-CPHtml $_ }) -join ', ') + '.' }
+        $practice += '</div>'
+    }
+    $avgHtml = if ($avgPts.Count -ge 2) { New-CPSvgLine -Points $avgPts -Width 1120 -Height 210 -LabelEvery ([Math]::Max(1, [Math]::Ceiling($avgPts.Count / 12))) -MinY -1 } elseif ($avgPts.Count -eq 1) { "<p class=""empty"">One month so far: average rating $($avgPts[0].Value).</p>" } else { '<p class="empty">No numeric ratings yet (they come from Codeforces, or write one in the header).</p>' }
+
+    $css = @'
+.viz-root{color-scheme:light;--surface-1:#ffffff;--page:#f9f9f9;--text-primary:#191919;--text-secondary:#666666;--grid:#e7e7e7;--axis:#c2c2c2;--border:rgba(11,11,11,0.10);
+--series-1:#257de0;--series-2:#f47230;--series-3:#00b894;--unrated:#a3a3a3;--empty-cell:#eeeeee;--link:#1b64be;
+--heat-1:#b6d5f8;--heat-2:#6aabf1;--heat-3:#257de0;--heat-4:#1757ac;
+--m1:#cce3fd;--m2:#9dc8f7;--m3:#6aabf1;--m4:#338ced;--m5:#1b64be;--m-ink:#191919;--m-ink-strong:#ffffff}
+@media (prefers-color-scheme: dark){.viz-root{color-scheme:dark;--surface-1:#191919;--page:#0b0b0b;--text-primary:#efefef;--text-secondary:#9c9c9c;--grid:#303030;--axis:#474747;--border:rgba(255,255,255,0.10);
+--series-1:#338ced;--series-2:#e76624;--series-3:#00a888;--unrated:#6b6b6b;--empty-cell:#262626;--link:#84b9f3;
+--heat-1:#0f4a96;--heat-2:#1b64be;--heat-3:#338ced;--heat-4:#84b9f3;
+--m1:#0e3d7e;--m2:#0f4a96;--m3:#1b64be;--m4:#519ced;--m5:#9dc8f7;--m-ink:#efefef;--m-ink-strong:#0b0b0b}}
+*{box-sizing:border-box}body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;background:var(--page);color:var(--text-primary)}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 24px 40px}
+header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px}
+h1{font-size:26px;margin:0}h2{font-size:15px;margin:0 0 4px}.sub{color:var(--text-secondary);font-size:13px}
+.grid6{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:12px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.card{background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:16px 18px}
+.stat .k{font-size:12px;color:var(--text-secondary)}.stat .v{font-size:30px;font-weight:600;margin:2px 0}.stat .s{font-size:12px;color:var(--text-secondary)}
+.full{margin-bottom:12px}.desc{color:var(--text-secondary);font-size:12px;margin:0 0 10px}
+svg.chart{display:block;overflow:visible}svg text{font-family:inherit}
+.lbl{font-size:12px;fill:var(--text-primary)}.val{font-size:11px;fill:var(--text-secondary)}.tick{font-size:10px;fill:var(--text-secondary)}
+.grid{stroke:var(--grid);stroke-width:1}.axis{stroke:var(--axis);stroke-width:1}
+g:hover > rect[fill^="var(--series"], g:hover > path{opacity:.8}.pt:hover circle{r:6}
+.legend{font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:6px}
+.sq{display:inline-block;width:11px;height:11px;border-radius:2px}
+table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;color:var(--text-secondary);font-weight:600;border-bottom:1px solid var(--grid);padding:6px 8px}
+td{border-bottom:1px solid var(--grid);padding:6px 8px}td.num{color:var(--text-secondary);width:40px}a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+.matrix td.cell{text-align:center;width:72px;font-weight:600;border:2px solid var(--surface-1);border-radius:4px}
+.m0{background:var(--empty-cell)}.m1{background:var(--m1);color:var(--m-ink)}.m2{background:var(--m2);color:var(--m-ink)}.m3{background:var(--m3);color:var(--m-ink)}.m4{background:var(--m4);color:var(--m-ink-strong)}.m5{background:var(--m5);color:var(--m-ink-strong)}
+.hint{font-size:13px;background:var(--page);border-radius:8px;padding:10px 12px;margin-top:12px;color:var(--text-primary)}
+.empty{color:var(--text-secondary);font-size:13px}footer{color:var(--text-secondary);font-size:12px;margin-top:18px;text-align:center}
+@media (max-width:900px){.grid6{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}}
+'@
+    $html = New-Object System.Text.StringBuilder
+    [void]$html.Append("<!DOCTYPE html><html lang=""en""><head><meta charset=""utf-8""><meta name=""viewport"" content=""width=device-width,initial-scale=1""><title>Problem solving report</title><style>$css</style></head><body class=""viz-root""><div class=""wrap"">")
+    [void]$html.Append("<header><div><h1>Problem solving report</h1><div class=""sub"">$(ConvertTo-CPHtml $repoName) &middot; $($d.Total) problems &middot; made $($Today.ToString('d MMMM yyyy', $inv)) by CP Solution Saver</div></div><div class=""sub"">Hover a bar, dot or square for details</div></header>")
+    [void]$html.Append("<div class=""grid6"">$cardHtml</div>")
+    [void]$html.Append("<div class=""card full""><h2>Activity in the last year</h2><p class=""desc"">One square per day; a stronger blue means more problems solved that day.</p>$(New-CPSvgCalendar -PerDay $d.PerDay -Today $Today)</div>")
+    [void]$html.Append("<div class=""grid2""><div class=""card""><h2>Total solved over time</h2><p class=""desc"">Running total, week by week.</p>$(New-CPSvgLine -Points $cumPts -LabelEvery ([Math]::Max(1, [Math]::Ceiling($cumPts.Count / 7))))</div>")
+    [void]$html.Append("<div class=""card""><h2>Problems per week</h2><p class=""desc"">The last 26 weeks.</p>$(New-CPSvgColumns -Cols $weekCols -LabelEvery 4)</div></div>")
+    [void]$html.Append("<div class=""grid2""><div class=""card""><h2>By level</h2><p class=""desc"">Easy / Medium / Hard from LeetCode, your header, or the rating (under $script:LevelMediumFrom Easy, under $script:LevelHardFrom Medium).</p>$(New-CPSvgHBars -Rows $levelRows -LabelWidth 90)</div>")
+    [void]$html.Append("<div class=""card""><h2>By rating</h2><p class=""desc"">Problems with a numeric rating (mostly Codeforces), in bands of 100.</p>$(New-CPSvgColumns -Cols $bandCols -LabelEvery ([Math]::Max(1, [Math]::Ceiling($bandCols.Count / 10))))</div></div>")
+    [void]$html.Append("<div class=""card full""><h2>Average rating by month</h2><p class=""desc"">Are you taking on harder problems? (Only problems with a numeric rating.)</p>$avgHtml</div>")
+    [void]$html.Append("<div class=""grid2""><div class=""card""><h2>Top topics</h2><p class=""desc"">The 15 topics you solved most.</p>$(New-CPSvgHBars -Rows $topicRows)$practice</div>")
+    [void]$html.Append("<div class=""card""><h2>Topics by level</h2><p class=""desc"">Your top topics split by level - empty cells are gaps worth practicing.</p>$(if ($mx.Length) { $mx.ToString() } else { '<p class=empty>No topics yet.</p>' })</div></div>")
+    [void]$html.Append("<div class=""grid2""><div class=""card""><h2>Platforms</h2>$(New-CPSvgHBars -Rows $platRows -LabelWidth 110)</div><div class=""card""><h2>Languages</h2><p class=""desc"">Solution files per language.</p>$(New-CPSvgHBars -Rows $langRows -LabelWidth 110)</div></div>")
+    [void]$html.Append("<div class=""grid2""><div class=""card""><h2>Hardest solved</h2>$(ConvertTo-CPReportTable -Problems $hardest -ShowStar)</div><div class=""card""><h2>Recently solved</h2>$(ConvertTo-CPReportTable -Problems $recent -ShowStar)</div></div>")
+    [void]$html.Append("<div class=""card full""><h2>&#9733; Starred</h2>$(if ($stars.Count) { ConvertTo-CPReportTable -Problems $stars } else { '<p class=empty>No starred problems yet - star one in Solved problems.</p>' })</div>")
+    [void]$html.Append("<footer>Built from the headers of the solution files in $(ConvertTo-CPHtml $repoName). Nothing is sent anywhere.</footer></div></body></html>")
+    return $html.ToString()
+}
+
+function Save-CPReport {
+    <# Writes the report page and returns its path (default: %APPDATA%\CPSolutionSaver\report.html). #>
+    param([Parameter(Mandatory)][string]$RepoPath, [string]$Path)
+    if (-not $Path) { $Path = Join-Path (Get-CPDataDir) 'report.html' }
+    $dir = Split-Path $Path -Parent
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    [IO.File]::WriteAllText($Path, (New-CPReportHtml -RepoPath $RepoPath), (New-Object System.Text.UTF8Encoding($false)))
+    return $Path
 }
 
 # ----------------------------------------------------------------------------

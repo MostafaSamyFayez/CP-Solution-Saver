@@ -27,7 +27,7 @@ function Start-CPTray {
         'Ctrl+Alt+Shift+F' = $hostWin.AddHotkey('quick', $mods, [System.Windows.Forms.Keys]::F)
         'Ctrl+Alt+Shift+B' = $hostWin.AddHotkey('browse', $mods, [System.Windows.Forms.Keys]::B)
     }
-    foreach ($c in @('open', 'quick', 'browse', 'templates', 'settings', 'welcome', 'update', 'exit')) { $hostWin.ListenFor($c) }
+    foreach ($c in @('open', 'quick', 'browse', 'templates', 'settings', 'welcome', 'update', 'report', 'exit')) { $hostWin.ListenFor($c) }
     $failed = @($hk.Keys | Where-Object { -not $hk[$_] })
     if ($failed.Count) { Write-CPTrace "hotkeys already used by another app: $($failed -join ', ')" }
 
@@ -50,6 +50,7 @@ function Start-CPTray {
     & $addItem 'Quick save                  Ctrl+Alt+Shift+F' 'quick'
     & $addItem 'Solved problems...       Ctrl+Alt+Shift+B' 'browse'
     [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    & $addItem 'Analytics report' 'report'
     & $addItem 'Code templates...' 'templates'
     & $addItem 'Settings...' 'settings'
     [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
@@ -191,12 +192,13 @@ function Start-CPTray {
         $tray.Busy = $true
         try {
             $cfg = Get-CPConfig $tray.ConfigPath
-            if ($c -in @('open', 'browse') -and (@(Test-CPConfig $cfg).Count -or -not $cfg.TutorialShown)) {
+            if ($c -in @('open', 'browse', 'report') -and (@(Test-CPConfig $cfg).Count -or -not $cfg.TutorialShown)) {
                 if (-not (Start-CPFirstRun -Config $cfg -ConfigPath $tray.ConfigPath)) { return }
             }
             switch ($c) {
                 'open'      { Show-CPMainWindow -Config $cfg -ConfigPath $tray.ConfigPath }
                 'browse'    { Show-CPBrowser -Config $cfg }
+                'report'    { Open-CPReport -Config $cfg }
                 'welcome'   { [void](Start-CPFirstRun -Config $cfg -ConfigPath $tray.ConfigPath -Force) }
                 'templates' { Show-CPTemplatePicker -Config $cfg -ConfigPath $tray.ConfigPath | Out-Null }
                 'settings'  { Show-CPSettingsDialog -Config $cfg -ConfigPath $tray.ConfigPath | Out-Null }

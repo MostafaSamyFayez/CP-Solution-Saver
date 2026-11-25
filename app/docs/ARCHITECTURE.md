@@ -91,7 +91,8 @@ Size guide: Core ~1700 lines, Gui ~1600, Tray ~200, entry ~190, installer ~400, 
 ```
 
 * **Commands**: `open` (save window), `quick` (quick save), `browse` (solved problems),
-  `templates`, `settings`, `welcome` (tour), `update` (check for updates now), `tray` (just start), `exit`. Hotkeys map to
+  `templates`, `settings`, `welcome` (tour), `update` (check for updates now), `report` (analytics
+  report), `tray` (just start), `exit`. Hotkeys map to
   open / quick / browse.
 * **Named objects** (per Windows session; the prefix gets `_<CPSAVER_INSTANCE>` when that
   environment variable is set, so a test copy can run next to the real one):
@@ -147,6 +148,8 @@ defaults, so new keys get their default automatically):
 | `UpdateIndexes` | `true` | regenerate README stats + Index/*.md |
 | `QuickSaveNotify` | `'dialog'` | `'dialog'` (centered result window) or `'notification'` (balloon) |
 | `BackupsToKeep` | `30` | |
+| `LevelMediumFrom` / `LevelHardFrom` | `1200` / `1800` | numeric rating cut-offs for Easy / Medium / Hard |
+| `BrowserSort` | `'Num DESC'` | last sort in Solved problems |
 | `TutorialShown` | `false` | the welcome tour was seen; the installer resets it on every interactive install (not on `-Update`/`-Quiet`) |
 | `AutoUpdateCheck` | `true` | check GitHub for a newer release (asks before updating) |
 | `LastUpdateCheck` | `''` | `yyyy-MM-dd HH:mm` of the last automatic check |
@@ -167,11 +170,23 @@ always use this order (`$script:HeaderOrder`); unknown keys are kept (as `Extra`
  * Platform: Codeforces
  * Problem ID: 4A
  * Difficulty: 800
+ * Level: Easy
  * Topics: brute force, math
  * Date Solved: 2026-11-23
+ * Starred: yes
  * Notes: even and > 2
  */
 ```
+
+**Level** (`Get-CPLevel`): the header's `Level:` if it says Easy/Medium/Hard, else from the
+difficulty: a word is used as it is, a number is grouped by `LevelMediumFrom` / `LevelHardFrom`
+(config, default 1200 / 1800; `Set-CPLevelCutoffs` applies them; `Get-CPConfig` calls it). The level is
+written into every saved header. An old header with `Level: 1500` (a number) counts as the difficulty.
+**Starred**: `Starred: yes` is written only for starred problems; re-saving keeps it (and a level picked
+by hand) unless the save says otherwise (`StarredSet` / `LevelSet` in the solution info).
+**Numbers** (`Set-CPSolutionNumbers`, run by `Get-CPAllSolutions`): problems are numbered by their first
+`Date Solved` (ties by path); the same problem key in several languages shares a number. Numbers are
+computed, not stored, so they always match the files.
 
 Styles (`Get-CPLanguage`): `block` `/* */` for C-like languages, `python` (a `"""` docstring;
 `#` comment lines are read too). `//` line headers are read as well. Lines starting with `#include`
@@ -191,7 +206,7 @@ with the same key **and the same language**; `Find-CPSolvedBefore` finds the pro
 is kept; identical content -> "no changes", nothing committed.
 
 **Indexes** (`Update-CPIndexes`): `Index/BY_PLATFORM.md`, `BY_TOPIC.md`, `BY_DIFFICULTY.md`
-are fully regenerated; in `README.md` only the block between `<!-- CPSAVER:STATS:START -->` and
+(grouped by level, then rating) are fully regenerated, with a `#` and a `Level` column and a star mark; in `README.md` only the block between `<!-- CPSAVER:STATS:START -->` and
 `<!-- CPSAVER:STATS:END -->` is replaced (the rest of the README is the user's).
 Difficulty groups (`Get-CPDifficultyGroup`): one group per numeric rating (`Rating 800`,
 `Rating 1200`...), then Easy / Medium / Hard, then any other text, then `Unrated`.
@@ -213,7 +228,9 @@ Exported: every `*-CP*` function. Sections in file order:
 | Online metadata | `Get-CPProblemMetadata` (one retry) -> `Get-CPProblemMetadataOnce`: Codeforces (problemset API, cached TSV), LeetCode (GraphQL), others (page title). Returns `@{ Ok; Name; Id; Difficulty; Topics; Message }` |
 | Solution info | `New-CPSolutionInfo` (header + metadata -> one hashtable, see its comment for the fields), `Update-CPSolutionPath`, `ConvertTo-CPSolutionText` |
 | Scanning the repo | `Get-CPAllSolutions` (reads every solution header; cached per file by mtime+size), `Get-CPStats`, `Find-CPSolvedBefore`, `Find-CPExistingSolution` |
+| Level and stars | `Get-CPLevel`, `ConvertTo-CPLevelName`, `Get-CPRatingNumber`, `Get-CPDifficultySortKey`, `Set-CPLevelCutoffs`, `Test-CPTruthy`, `Set-CPSolutionNumbers`, `Set-CPHeaderField`, `Set-CPStarred` (edit header, refresh indexes, commit, push) |
 | Indexes | `Update-CPIndexes` (returns changed paths) |
+| Analytics report | `Get-CPReportData` (one entry per problem; totals, streaks, per-day counts), SVG helpers `New-CPSvgHBars` / `New-CPSvgColumns` / `New-CPSvgLine` / `New-CPSvgCalendar`, `New-CPReportHtml` (the page), `Save-CPReport` (writes `report.html`) |
 | Git | `Invoke-CPGit <dir> <args...>` -> `@{ Code; Output }`, `Test-CPGitAvailable`, `Get-CPGitIdentity`, `Set-CPGitIdentity`, `Test-CPRepoFolder` ('repo' / 'empty' / 'files' / 'none'), `Initialize-CPRepo` |
 | Saving | `Save-CPSolution` (section 8) |
 | Templates | `Get-CPBuiltInTemplates` (11 built-ins as text), `Initialize-CPTemplates`, `Get-CPTemplates`, `Get-CPDefaultTemplatePath`, `Reset-CPPracticeFile`, `Add-CPHeaderFields` |
@@ -261,7 +278,8 @@ Dot-sourced into the process (needs the Core module imported first). Contains:
 | Function | Window |
 |---|---|
 | `Show-CPMainWindow` | the save window (fields, *Will be saved as*, options, buttons, log) |
-| `Show-CPBrowser` | Solved problems: search, filters, preview, load back |
+| `Show-CPBrowser` | Solved problems: search, filters (levels + ratings, starred only), #/star/level columns, sorting (remembered), star toggle (background job), preview, load back |
+| `Open-CPReport` | builds the analytics report and opens it in the default browser |
 | `Show-CPTemplatePicker` | code templates: preview, load, set default per language |
 | `Show-CPSettingsDialog` | settings, repo helpers (clone / create / connect to GitHub) |
 | `Show-CPTopicPicker` | topic checklist |
@@ -358,7 +376,8 @@ records a result. Sections:
 9 browse + load back, 10 languages / link identity / dates / templates / settings,
 13 local-only repo (`git init`, no remote), 14 first-time setup helpers (empty folder, connect
 to GitHub later, git identity, old launchers, tour flag), 11 online lookups (`-Online`),
-15 updates (version compare, release parsing, skip, check interval), 12 static checks (every window
+15 updates (version compare, release parsing, skip, check interval), 16 levels / stars / numbers /
+report (cut-offs, sort keys, star kept on re-save, unstar commit, README starred list, report data and page), 12 static checks (every window
 button has a click handler; every script parses). `-Online` also fetches the real latest release and
 downloads its zip.
 
@@ -418,6 +437,13 @@ Use `$tmp` for files; `RunGit <dir> <args>` for git.
 
 **Make a release**: bump `$script:AppVersion`, add a `CHANGELOG.md` section, run the tests,
 commit and push, then `powershell -ExecutionPolicy Bypass -File app\tools\New-Release.ps1`.
+
+**The report page**: one self-contained HTML file, no scripts, charts as inline SVG with `<title>`
+tooltips. Colors are CSS variables in a light and a dark (`prefers-color-scheme`) set taken from a
+validated palette: one blue ramp for magnitude (calendar, topic table), a fixed categorical order for
+the levels (Easy = slot 1, Medium = slot 2, Hard = slot 3, gray = unrated), text never in series colors.
+To add a chart: compute the numbers in `New-CPReportHtml` (or `Get-CPReportData`), draw with one of
+the helpers, append a `<div class="card">`. Check it in a browser, in light and dark mode.
 
 ## 16. Debugging
 

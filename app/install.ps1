@@ -312,6 +312,7 @@ sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidd
     if ($nativeOk) {
         New-Shortcut (Join-Path $menu 'CP Solution Saver - Code templates.lnk') 'templates' 'Choose and load code templates' ''
         New-Shortcut (Join-Path $menu 'CP Solution Saver - How to use.lnk') 'welcome' 'A short tour of CP Solution Saver and its shortcuts' ''
+    New-Shortcut (Join-Path $menu 'CP Solution Saver - Analytics report.lnk') 'report' 'Charts of your progress, built from your saved solutions' ''
     }
     $u = $shell.CreateShortcut((Join-Path $menu 'Uninstall CP Solution Saver.lnk'))
     $u.TargetPath = Join-Path $env:SystemRoot 'System32\wscript.exe'

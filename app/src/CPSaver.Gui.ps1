@@ -811,6 +811,15 @@ function Show-CPSettingsDialog {
     if (-not (Test-Path -LiteralPath (Get-CPLauncherPath))) { $cStart.Enabled = $false }
     $grid.Controls.Add($opts, 0, $row); $grid.SetColumnSpan($opts, 3); $row++
 
+    # level cut-offs for numeric ratings
+    $lvRow = New-Object System.Windows.Forms.FlowLayoutPanel; $lvRow.AutoSize = $true; $lvRow.WrapContents = $false; $lvRow.Margin = New-Object System.Windows.Forms.Padding(3, 4, 3, 3)
+    $mkNum = { param($v) $n = New-Object System.Windows.Forms.NumericUpDown; $n.Minimum = 100; $n.Maximum = 4000; $n.Increment = 100; $n.Width = 70; $n.Font = $script:CPFont; $n.Value = [Math]::Max(100, [Math]::Min(4000, [int]$v)); $n }
+    $nMed = & $mkNum $Config.LevelMediumFrom; $nHard = & $mkNum $Config.LevelHardFrom
+    $lvRow.Controls.Add((New-CPLabel 'Level from a numeric rating:  Medium from'))
+    $lvRow.Controls.Add($nMed); $lvRow.Controls.Add((New-CPLabel '  Hard from')); $lvRow.Controls.Add($nHard)
+    $lvHint = New-CPLabel '  (below Medium = Easy)'; $lvHint.ForeColor = [System.Drawing.Color]::Gray; $lvRow.Controls.Add($lvHint)
+    $grid.Controls.Add($lvRow, 0, $row); $grid.SetColumnSpan($lvRow, 3); $row++
+
     $upg = New-CPButton 'Add Difficulty/Topics fields to my practice files'' headers'
     $upg.Add_Click({
         Invoke-CPSafe -What 'Updating the headers' {
@@ -841,6 +850,8 @@ function Show-CPSettingsDialog {
         $Config.QuickSaveNotify = $(if ($cDlg.Checked) { 'notification' } else { 'dialog' })
         $Config.CloseAfterSave = $cClose.Checked
         $Config.AutoUpdateCheck = $cUpd.Checked
+        $Config.LevelMediumFrom = [int]$nMed.Value; $Config.LevelHardFrom = [int][Math]::Max($nHard.Value, $nMed.Value + 100)
+        Set-CPLevelCutoffs $Config
         if ($cStart.Enabled) { try { Set-CPStartWithWindows $cStart.Checked } catch { } }
         if ($Config.RepoPath -and (Test-CPRepoFolder $Config.RepoPath) -ne 'repo') {
             try { $use = Use-CPRepoFolder $Config.RepoPath; if ($use) { $Config.RepoPath = $use; $repoBox.Text = $use } } catch { }
@@ -924,8 +935,16 @@ function Show-CPMainWindow {
     for ($r = 800; $r -le 3500; $r += 100) { [void]$ui.Difficulty.Items.Add([string]$r) }
     $diffRow = New-Object System.Windows.Forms.FlowLayoutPanel; $diffRow.AutoSize = $true; $diffRow.Margin = New-Object System.Windows.Forms.Padding(0)
     $diffRow.Controls.Add($ui.Difficulty)
-    $dh = New-CPLabel 'rating (800, 1200...) or Easy / Medium / Hard'; $dh.ForeColor = [System.Drawing.Color]::Gray
-    $diffRow.Controls.Add($dh)
+    $diffRow.Controls.Add((New-CPLabel '   Level:'))
+    $ui.Level = New-Object System.Windows.Forms.ComboBox; $ui.Level.DropDownStyle = 'DropDownList'; $ui.Level.Font = $script:CPFont; $ui.Level.Width = 90
+    foreach ($l in @('Auto', 'Easy', 'Medium', 'Hard')) { [void]$ui.Level.Items.Add($l) }
+    $ui.Level.SelectedIndex = 0
+    $diffRow.Controls.Add($ui.Level)
+    $ui.LevelAuto = New-CPLabel ''; $ui.LevelAuto.ForeColor = [System.Drawing.Color]::Gray
+    $diffRow.Controls.Add($ui.LevelAuto)
+    $ui.Star = New-Object System.Windows.Forms.CheckBox; $ui.Star.Text = ([string][char]0x2605 + ' Star this problem'); $ui.Star.AutoSize = $true
+    $ui.Star.Margin = New-Object System.Windows.Forms.Padding(18, 6, 3, 3)
+    $diffRow.Controls.Add($ui.Star)
     $grid.Controls.Add($diffRow, 1, $row); $grid.SetColumnSpan($diffRow, 2); $row++
 
     $grid.Controls.Add((New-CPLabel 'Topics:'), 0, $row)
@@ -965,8 +984,9 @@ function Show-CPMainWindow {
     $ui.Browse = New-CPButton 'Solved problems...'
     $ui.Templates = New-CPButton 'Templates...'
     $ui.Help = New-CPButton 'How to use'
+    $ui.Report = New-CPButton 'Report'
     foreach ($b in @($ui.Save, $ui.Browse, $ui.Templates, $ui.Settings)) { $btns.Controls.Add($b) }
-    foreach ($b in @($ui.OpenFolder, $ui.OpenWeb, $ui.Rebuild, $ui.Help)) { $b.Font = $script:CPFontSmall; $btns2.Controls.Add($b) }
+    foreach ($b in @($ui.Report, $ui.OpenFolder, $ui.OpenWeb, $ui.Rebuild, $ui.Help)) { $b.Font = $script:CPFontSmall; $btns2.Controls.Add($b) }
     $grid.Controls.Add($btns, 0, $row); $grid.SetColumnSpan($btns, 3); $row++
     $grid.Controls.Add($btns2, 0, $row); $grid.SetColumnSpan($btns2, 3); $row++
 
@@ -988,6 +1008,15 @@ function Show-CPMainWindow {
     $setStatus = { param($m, $color) $ui.Status.Text = $m; $ui.Status.ForeColor = $color; [System.Windows.Forms.Application]::DoEvents() }
 
     $topicsFromBox = { @(Merge-CPTopics @(,$ui.Topics.Text)) }
+    $updateLevelHint = {
+        if ($ui.Level.SelectedIndex -le 0) {
+            $lv = Get-CPLevel -Difficulty $ui.Difficulty.Text
+            $ui.LevelAuto.Text = $(if ($lv) { "= $lv (from the difficulty)" } else { '(unrated - pick one if you like)' })
+        } else { $ui.LevelAuto.Text = '' }
+    }
+    $ui.Difficulty.Add_TextChanged({ & $updateLevelHint })
+    $ui.Level.Add_SelectedIndexChanged({ & $updateLevelHint })
+    $ui.Star.Add_Click({ $st.StarTouched = $true })
 
     $refreshTarget = {
         if (-not $st.Info) { return }
@@ -1001,7 +1030,9 @@ function Show-CPMainWindow {
             $st.Existing = Find-CPExistingSolution -RepoPath $Config.RepoPath -Info $st.Info
         } catch { }
         if ($st.Existing) {
-            $when = ($before | Where-Object { $_.RelPath -eq $st.Existing } | Select-Object -First 1).DateSolved
+            $exItem = $before | Where-Object { $_.RelPath -eq $st.Existing } | Select-Object -First 1
+            if (-not $st.StarTouched -and -not $st.Info.StarredSet -and $exItem -and $exItem.Starred) { $ui.Star.Checked = $true }
+            $when = $exItem.DateSolved
             $ui.Target.Text = "$($st.Existing)   (solved before$(if ($when) { " on $when" }) - will be updated)"; $ui.Target.ForeColor = $script:CPOrange; $ui.KeepBoth.Visible = $true
         } elseif ($before.Count) {
             $ui.Target.Text = "$($st.Info.RelPath)   (new $($st.Info.Language) file; solved before in $(@($before | ForEach-Object { $_.Language } | Select-Object -Unique) -join ', '))"; $ui.Target.ForeColor = $script:CPGreen; $ui.KeepBoth.Visible = $false
@@ -1049,6 +1080,9 @@ function Show-CPMainWindow {
         $ui.Name.Text = $st.Info.Name; $ui.Link.Text = $st.Info.Link
         $ui.Platform.Text = $st.Info.Platform; $ui.Id.Text = $st.Info.Id
         $ui.Difficulty.Text = $st.Info.Difficulty; $ui.Topics.Text = (@($st.Info.Topics) -join ', ')
+        $ui.Level.SelectedIndex = [Math]::Max(0, $ui.Level.Items.IndexOf($(if ($st.Info.LevelSet) { $st.Info.Level } else { 'Auto' })))
+        $st.StarTouched = $false; $ui.Star.Checked = [bool]$st.Info.Starred
+        & $updateLevelHint
         $ui.Notes.Text = ($st.Info.Notes -replace "\r?\n", "`r`n")
         $lines = @($code -split "`n").Count
         $ui.Source.Text = "$($st.Info.Language), $lines lines, saved $(Format-CPAgo $st.LoadedMtime)"; $ui.Source.ForeColor = [System.Drawing.Color]::DimGray
@@ -1080,6 +1114,9 @@ function Show-CPMainWindow {
         $info.Name = $ui.Name.Text.Trim(); $info.Link = $ui.Link.Text.Trim(); $info.Platform = $ui.Platform.Text.Trim()
         $info.Id = $ui.Id.Text.Trim(); $info.Difficulty = $ui.Difficulty.Text.Trim(); $info.Topics = & $topicsFromBox
         $info.Notes = $ui.Notes.Text.Trim()
+        if ($ui.Level.SelectedIndex -gt 0) { $info.Level = [string]$ui.Level.SelectedItem; $info.LevelSet = $true }
+        else { $info.Level = Get-CPLevel -Difficulty $info.Difficulty; $info.LevelSet = $false }   # worked out here, with your cut-offs
+        $info.Starred = $ui.Star.Checked; $info.StarredSet = $true
         if (-not $info.Platform) { $info.Platform = (Get-CPPlatformInfo $info.Link).Platform }
         if (-not $info.Link) { & $setStatus 'Enter the problem link first (required).' $script:CPRed; $ui.Link.Focus(); return }
         if (-not $info.Name) { & $setStatus 'Enter the problem name first.' $script:CPRed; return }
@@ -1158,6 +1195,7 @@ function Show-CPMainWindow {
     })
     $ui.Save.Add_Click({ Invoke-CPSafe -What 'Saving' $doSave })
     $ui.Help.Add_Click({ Invoke-CPSafe -What 'How to use' { [void](Show-CPWelcome) } })
+    $ui.Report.Add_Click({ Invoke-CPSafe -What 'Analytics report' { $f.Cursor = 'WaitCursor'; try { Open-CPReport -Config $Config } finally { $f.Cursor = 'Default' } } })
     $f.Add_FormClosing({ param($s, $e) if ($st.Busy) { $e.Cancel = $true; $ui.Status.Text = 'Please wait - still saving...' } })
     $ui.Fetch.Add_Click({ Invoke-CPSafe -What 'Online lookup' $doFetch })
     $ui.Reload.Add_Click({ Invoke-CPSafe -What 'Reload' { $ui.Log.Clear(); & $loadFile $true } })
@@ -1294,6 +1332,15 @@ function ConvertTo-CPLikeLiteral([string]$s) {
     return $sb.ToString()
 }
 
+function Open-CPReport {
+    <# Builds the analytics report from the solutions folder and opens it in the default browser. #>
+    param([Parameter(Mandatory)]$Config)
+    if ((Test-CPRepoFolder $Config.RepoPath) -ne 'repo') { throw 'Choose your solutions folder in Settings first.' }
+    Set-CPLevelCutoffs $Config
+    $path = Save-CPReport -RepoPath $Config.RepoPath
+    Start-Process $path
+}
+
 function Show-CPBrowser {
     <#
       Lists every saved solution with search + filters and a code preview.
@@ -1318,22 +1365,25 @@ function Show-CPBrowser {
     # filter row
     $flt = New-Object System.Windows.Forms.TableLayoutPanel
     # fixed height + Dock Fill (not AutoSize), so the search box gets all the spare width
-    $flt.Dock = 'Fill'; $flt.AutoSize = $false; $flt.Height = 38; $flt.ColumnCount = 12; $flt.RowCount = 1; $flt.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 4)
-    foreach ($w in @(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100)) {
+    $flt.Dock = 'Fill'; $flt.AutoSize = $false; $flt.Height = 38; $flt.ColumnCount = 13; $flt.RowCount = 1; $flt.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 4)
+    foreach ($w in @(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100)) {
         if ($w) { [void]$flt.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $w))) }
         else { [void]$flt.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize))) }
     }
     $mkCombo = { $c = New-Object System.Windows.Forms.ComboBox; $c.DropDownStyle = 'DropDownList'; $c.Font = $script:CPFont; $c.Width = 120; $c.DropDownWidth = 200; $c.Anchor = [System.Windows.Forms.AnchorStyles]::Left; $c }
     $b.Search = New-CPTextBox
-    $b.Search.Dock = 'None'; $b.Search.Width = 190; $b.Search.Anchor = [System.Windows.Forms.AnchorStyles]::Left
-    $b.Platform = & $mkCombo; $b.Topic = & $mkCombo; $b.Topic.Width = 150; $b.Diff = & $mkCombo; $b.Lang = & $mkCombo; $b.Lang.Width = 95
+    $b.Search.Dock = 'None'; $b.Search.Width = 170; $b.Search.Anchor = [System.Windows.Forms.AnchorStyles]::Left
+    $b.Platform = & $mkCombo; $b.Platform.Width = 110; $b.Topic = & $mkCombo; $b.Topic.Width = 140; $b.Diff = & $mkCombo; $b.Diff.Width = 110; $b.Lang = & $mkCombo; $b.Lang.Width = 85
+    $b.StarOnly = New-Object System.Windows.Forms.CheckBox; $b.StarOnly.Text = ([string][char]0x2605 + ' Starred'); $b.StarOnly.AutoSize = $true
+    $b.StarOnly.Anchor = [System.Windows.Forms.AnchorStyles]::Left; $b.StarOnly.Margin = New-Object System.Windows.Forms.Padding(8, 3, 3, 3)
     $b.Clear = New-CPButton 'Clear'
     $flt.Controls.Add((New-CPLabel 'Search:'), 0, 0); $flt.Controls.Add($b.Search, 1, 0)
     $flt.Controls.Add((New-CPLabel ' Platform:'), 2, 0); $flt.Controls.Add($b.Platform, 3, 0)
     $flt.Controls.Add((New-CPLabel ' Topic:'), 4, 0); $flt.Controls.Add($b.Topic, 5, 0)
     $flt.Controls.Add((New-CPLabel ' Difficulty:'), 6, 0); $flt.Controls.Add($b.Diff, 7, 0)
     $flt.Controls.Add((New-CPLabel ' Language:'), 8, 0); $flt.Controls.Add($b.Lang, 9, 0)
-    $flt.Controls.Add($b.Clear, 10, 0)
+    $flt.Controls.Add($b.StarOnly, 10, 0)
+    $flt.Controls.Add($b.Clear, 11, 0)
     $root.Controls.Add($flt, 0, 1)
 
     # grid + preview
@@ -1381,7 +1431,9 @@ function Show-CPBrowser {
     $b.Backups = New-CPButton 'Backups'
     $b.Refresh = New-CPButton 'Refresh'
     $b.Close = New-CPButton 'Close'
-    foreach ($x in @($b.Load, $b.OpenLink, $b.OpenFile, $b.Backups, $b.Refresh, $b.Close)) { $btns.Controls.Add($x) }
+    $b.Star = New-CPButton ([string][char]0x2605 + ' Star') 100
+    $b.Report = New-CPButton 'Report'
+    foreach ($x in @($b.Load, $b.Star, $b.OpenLink, $b.OpenFile, $b.Report, $b.Backups, $b.Refresh, $b.Close)) { $btns.Controls.Add($x) }
     $bottom.Controls.Add($b.Status, 0, 0); $bottom.Controls.Add($btns, 1, 0)
     $root.Controls.Add($bottom, 0, 3)
     $f.Controls.Add($root)
@@ -1389,9 +1441,12 @@ function Show-CPBrowser {
 
     # ---------------------------------------------------------------- data
     $dt = New-Object System.Data.DataTable
-    foreach ($c in @('Name', 'Platform', 'ID', 'Difficulty', 'Topics', 'Language', 'Solved', 'Path', 'Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'SearchText')) { [void]$dt.Columns.Add($c, [string]) }
+    foreach ($c in @('#', 'Star', 'Name', 'Platform', 'ID', 'Difficulty', 'Level', 'Topics', 'Language', 'Solved', 'Path', 'Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'NumSort', 'Starred', 'SearchText')) { [void]$dt.Columns.Add($c, [string]) }
     $view = New-Object System.Data.DataView($dt)
-    $st = @{ Total = 0; SortCol = 'Solved'; SortDesc = $true; Loading = $false }
+    # sort: column + direction, remembered in the settings ("Num DESC" = newest number first)
+    $sortParts = ([string]$Config.BrowserSort) -split ' '
+    $st = @{ Total = 0; SortCol = $(if ($sortParts[0]) { $sortParts[0] } else { 'Num' }); SortDesc = ($sortParts[1] -ne 'ASC'); Loading = $false; StarBusy = $false }
+    $starMark = [string][char]0x2605
 
     $fillCombo = {
         param($combo, $allText, $items)
@@ -1407,22 +1462,27 @@ function Show-CPBrowser {
         $all = @()
         try { $all = @(Get-CPAllSolutions $Config.RepoPath) } catch { $b.Status.Text = "Could not read the repo: $($_.Exception.Message)" }
         $plats = @{}; $topics = @{}; $diffs = @{}; $langs = @{}
+        Set-CPLevelCutoffs $Config
         foreach ($s in $all) {
             $dg = Get-CPDifficultyGroup $s.Difficulty
             $tl = @($s.Topics | ForEach-Object { $_.ToLowerInvariant() })
             $r = $dt.NewRow()
+            $r['#'] = [string]$s.Number; $r['NumSort'] = '{0:D6}' -f [int]$s.Number
+            $r['Star'] = $(if ($s.Starred) { $starMark } else { '' }); $r['Starred'] = $(if ($s.Starred) { '1' } else { '0' })
             $r['Name'] = $s.Name; $r['Platform'] = $s.Platform; $r['ID'] = $s.Id; $r['Difficulty'] = $s.Difficulty
+            $r['Level'] = $s.Level
             $r['Topics'] = ($tl -join ', '); $r['Language'] = $s.Language; $r['Solved'] = $s.DateSolved; $r['Path'] = $s.RelPath; $r['Link'] = $s.Link
             $r['FullPath'] = $s.FullPath; $r['TopicsKey'] = ',' + ($tl -join ',') + ','
-            $r['DiffGroup'] = $dg.Label; $r['DiffSort'] = $dg.SortKey
-            $r['SearchText'] = (@($s.Name, $s.Id, $s.Platform, $s.RelPath, $s.Notes, ($tl -join ' '), $s.Link) -join ' ').ToLowerInvariant()
+            $r['DiffGroup'] = $dg.Label; $r['DiffSort'] = (Get-CPDifficultySortKey $s.Difficulty $s.Level)
+            $r['SearchText'] = (@($s.Name, $s.Id, $s.Platform, $s.RelPath, $s.Notes, ($tl -join ' '), $s.Link, $s.Level, "#$($s.Number)") -join ' ').ToLowerInvariant()
             $dt.Rows.Add($r)
-            $plats[$s.Platform] = 1; foreach ($t in $tl) { $topics[$t] = 1 }; $diffs[$dg.Label] = $dg.SortKey; $langs[$s.Language] = 1
+            $plats[$s.Platform] = 1; foreach ($t in $tl) { $topics[$t] = 1 }; if ($dg.Label -ne 'Unrated' -and $dg.Label -notin @('Easy', 'Medium', 'Hard')) { $diffs[$dg.Label] = $dg.SortKey }; $langs[$s.Language] = 1
         }
         $st.Total = $all.Count
         & $fillCombo $b.Platform 'All platforms' @($plats.Keys | Sort-Object)
         & $fillCombo $b.Topic 'All topics' @($topics.Keys | Sort-Object)
-        & $fillCombo $b.Diff 'All difficulties' @($diffs.Keys | Sort-Object { $diffs[$_] })
+        # levels first (across all platforms), then the exact ratings
+        & $fillCombo $b.Diff 'All difficulties' @(@('Easy', 'Medium', 'Hard', 'Unrated') + @($diffs.Keys | Sort-Object { $diffs[$_] }))
         & $fillCombo $b.Lang 'All' @($langs.Keys | Sort-Object)
         $st.Loading = $false
         & $applyFilter
@@ -1436,28 +1496,40 @@ function Show-CPBrowser {
         }
         if ($b.Platform.SelectedIndex -gt 0) { $conds.Add("Platform = '" + ([string]$b.Platform.SelectedItem -replace "'", "''") + "'") }
         if ($b.Topic.SelectedIndex -gt 0) { $conds.Add("TopicsKey LIKE '%," + (ConvertTo-CPLikeLiteral ([string]$b.Topic.SelectedItem)) + ",%'") }
-        if ($b.Diff.SelectedIndex -gt 0) { $conds.Add("DiffGroup = '" + ([string]$b.Diff.SelectedItem -replace "'", "''") + "'") }
+        if ($b.Diff.SelectedIndex -gt 0) {
+            $dsel = [string]$b.Diff.SelectedItem
+            if ($dsel -in @('Easy', 'Medium', 'Hard')) { $conds.Add("Level = '$dsel'") }
+            elseif ($dsel -eq 'Unrated') { $conds.Add("Level = ''") }
+            else { $conds.Add("DiffGroup = '" + ($dsel -replace "'", "''") + "'") }
+        }
         if ($b.Lang.SelectedIndex -gt 0) { $conds.Add("Language = '" + ([string]$b.Lang.SelectedItem -replace "'", "''") + "'") }
+        if ($b.StarOnly.Checked) { $conds.Add("Starred = '1'") }
         $view.RowFilter = ($conds -join ' AND ')
-        $sortCol = if ($st.SortCol -eq 'Difficulty') { 'DiffSort' } else { $st.SortCol }
-        $view.Sort = "$sortCol $(if ($st.SortDesc) { 'DESC' } else { 'ASC' }), Name ASC"
+        $sortCol = switch ($st.SortCol) { 'Difficulty' { 'DiffSort' } 'Level' { 'DiffSort' } 'Num' { 'NumSort' } '#' { 'NumSort' } 'Star' { 'Starred' } default { "[$($st.SortCol)]" } }
+        $view.Sort = "$sortCol $(if ($st.SortDesc) { 'DESC' } else { 'ASC' }), NumSort DESC"
         $b.Status.ForeColor = [System.Drawing.Color]::Black
-        $b.Status.Text = if ($st.Total -eq 0) { 'No solutions saved yet. Save one first, then come back here.' } else { "Showing $($view.Count) of $($st.Total) solved problems" }
+        $b.Status.Text = if ($st.Total -eq 0) { 'No solutions saved yet. Save one first, then come back here.' } else { "Showing $($view.Count) of $($st.Total) solutions" }
         if ($view.Count -eq 0) { $b.Preview.Text = ''; $b.PrevTitle.Text = 'No match.' }
     }
 
     $g.DataSource = $view
     $g.Add_DataBindingComplete({
-        foreach ($c in @('Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'SearchText')) { if ($g.Columns[$c]) { $g.Columns[$c].Visible = $false } }
-        $weights = @{ Name = 24; Platform = 10; ID = 8; Difficulty = 9; Topics = 22; Language = 8; Solved = 10; Path = 22 }
+        foreach ($c in @('Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'NumSort', 'Starred', 'SearchText')) { if ($g.Columns[$c]) { $g.Columns[$c].Visible = $false } }
+        $weights = @{ '#' = 5; Star = 3; Name = 24; Platform = 10; ID = 7; Difficulty = 8; Level = 7; Topics = 20; Language = 7; Solved = 9; Path = 20 }
         foreach ($k in $weights.Keys) { if ($g.Columns[$k]) { $g.Columns[$k].FillWeight = $weights[$k]; $g.Columns[$k].SortMode = 'Programmatic' } }
-        foreach ($c in $g.Columns) { if ($c.Name -eq $st.SortCol) { $c.HeaderCell.SortGlyphDirection = $(if ($st.SortDesc) { 'Descending' } else { 'Ascending' }) } else { $c.HeaderCell.SortGlyphDirection = 'None' } }
+        if ($g.Columns['Star']) { $g.Columns['Star'].HeaderText = $starMark; $g.Columns['Star'].DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(212, 167, 44); $g.Columns['Star'].DefaultCellStyle.Alignment = 'MiddleCenter'; $g.Columns['Star'].ToolTipText = 'Starred (click the star cell or the Star button)' }
+        if ($g.Columns['#']) { $g.Columns['#'].DefaultCellStyle.ForeColor = $script:CPMuted; $g.Columns['#'].ToolTipText = 'Problem number: #1 is the first problem you solved' }
+        $glyphCol = if ($st.SortCol -eq 'Num') { '#' } else { $st.SortCol }
+        foreach ($c in $g.Columns) { if ($c.Name -eq $glyphCol) { $c.HeaderCell.SortGlyphDirection = $(if ($st.SortDesc) { 'Descending' } else { 'Ascending' }) } else { $c.HeaderCell.SortGlyphDirection = 'None' } }
     })
     $g.Add_ColumnHeaderMouseClick({
         param($s, $e)
         $name = $g.Columns[$e.ColumnIndex].Name
-        if ($st.SortCol -eq $name) { $st.SortDesc = -not $st.SortDesc } else { $st.SortCol = $name; $st.SortDesc = ($name -eq 'Solved') }
+        if ($name -eq '#') { $name = 'Num' }
+        if ($st.SortCol -eq $name) { $st.SortDesc = -not $st.SortDesc } else { $st.SortCol = $name; $st.SortDesc = ($name -in @('Solved', 'Num', 'Star')) }
         & $applyFilter
+        $Config.BrowserSort = "$($st.SortCol) $(if ($st.SortDesc) { 'DESC' } else { 'ASC' })"
+        try { Save-CPConfig -Config $Config } catch { }
     })
 
     $current = {
@@ -1469,7 +1541,8 @@ function Show-CPBrowser {
     $g.Add_SelectionChanged({
         $r = & $current
         if (-not $r) { return }
-        $b.PrevTitle.Text = "$($r['Name'])   -   $($r['Path'])"
+        $b.PrevTitle.Text = "#$($r['#'])  $($r['Name'])   -   $($r['Path'])"
+        $b.Star.Text = $(if ($r['Starred'] -eq '1') { 'Unstar' } else { $starMark + ' Star' })
         try { $b.Preview.Text = ([IO.File]::ReadAllText($r['FullPath']) -replace "(?<!`r)`n", "`r`n") } catch { $b.Preview.Text = "Could not read the file: $($_.Exception.Message)" }
     })
 
@@ -1489,9 +1562,41 @@ function Show-CPBrowser {
         [System.Windows.Forms.MessageBox]::Show("Loaded into $tn.`n`nIf your editor asks whether to reload the file, choose Yes.", 'Load solution') | Out-Null
     }
 
+    $doStar = {
+        $r = & $current
+        if (-not $r) { $b.Status.Text = 'Select a problem first.'; return }
+        if ($st.StarBusy) { return }
+        $newVal = ($r['Starred'] -ne '1')
+        $rel = $r['Path']
+        # show it right away; the file edit + commit + push run in the background
+        $r['Starred'] = $(if ($newVal) { '1' } else { '0' }); $r['Star'] = $(if ($newVal) { $starMark } else { '' })
+        $b.Star.Text = $(if ($newVal) { 'Unstar' } else { $starMark + ' Star' })
+        $st.StarBusy = $true
+        $b.Status.ForeColor = $script:CPMuted; $b.Status.Text = "$(if ($newVal) { 'Starring' } else { 'Unstarring' }) $($r['Name'])..."
+        Start-CPJob -Owner $f -Arguments @($Config.RepoPath, $rel, $newVal, [bool]$Config.PushAfterSave, [bool]$Config.UpdateIndexes, [int]$Config.LevelMediumFrom, [int]$Config.LevelHardFrom) -Script {
+            param($repo, $relPath, $val, $push, $idx, $lm, $lh)
+            Set-CPLevelCutoffs @{ LevelMediumFrom = $lm; LevelHardFrom = $lh }
+            Set-CPStarred -RepoPath $repo -RelPath $relPath -Starred $val -Push:$push -UpdateIndexes:$idx
+        } -OnDone {
+            param($res, $err)
+            $st.StarBusy = $false
+            if ($err -or -not $res -or -not $res.Success) {
+                $b.Status.ForeColor = $script:CPRed
+                $b.Status.Text = "Could not change the star: $(if ($err) { $err } else { $res.Message })"
+                & $loadData
+                return
+            }
+            $b.Status.ForeColor = $script:CPGreen
+            $b.Status.Text = "Done: $($res.Message)"
+        }
+    }
+    $b.Star.Add_Click({ Invoke-CPSafe -What 'Star' $doStar })
+    $g.Add_CellClick({ param($s, $e) if ($e.RowIndex -ge 0 -and $g.Columns[$e.ColumnIndex].Name -eq 'Star') { Invoke-CPSafe -What 'Star' $doStar } })
+    $b.StarOnly.Add_CheckedChanged({ & $applyFilter })
+    $b.Report.Add_Click({ Invoke-CPSafe -What 'Analytics report' { $f.Cursor = 'WaitCursor'; try { Open-CPReport -Config $Config } finally { $f.Cursor = 'Default' } } })
     $b.Search.Add_TextChanged({ & $applyFilter })
     foreach ($c in @($b.Platform, $b.Topic, $b.Diff, $b.Lang)) { $c.Add_SelectedIndexChanged({ & $applyFilter }) }
-    $b.Clear.Add_Click({ $st.Loading = $true; $b.Search.Text = ''; $b.Platform.SelectedIndex = 0; $b.Topic.SelectedIndex = 0; $b.Diff.SelectedIndex = 0; $b.Lang.SelectedIndex = 0; $st.Loading = $false; & $applyFilter })
+    $b.Clear.Add_Click({ $st.Loading = $true; $b.Search.Text = ''; $b.Platform.SelectedIndex = 0; $b.Topic.SelectedIndex = 0; $b.Diff.SelectedIndex = 0; $b.Lang.SelectedIndex = 0; $b.StarOnly.Checked = $false; $st.Loading = $false; & $applyFilter })
     $b.Load.Add_Click({ Invoke-CPSafe -What 'Loading the solution' $doLoad })
     $g.Add_CellDoubleClick({ param($s, $e) if ($e.RowIndex -ge 0) { Invoke-CPSafe -What 'Loading the solution' $doLoad } })
     $b.OpenLink.Add_Click({ $r = & $current; if ($r -and $r['Link']) { Start-Process $r['Link'] } else { $b.Status.Text = 'This problem has no link.' } })
@@ -1512,7 +1617,12 @@ function Show-CPBrowser {
         $hdr.Right.Text = Format-CPStats $Config.RepoPath
         $b.Search.Focus()
     })
+    # background work (starring) finishes through this timer, also when no tray app is running
+    $jobTick = New-Object System.Windows.Forms.Timer; $jobTick.Interval = 150
+    $jobTick.Add_Tick({ Update-CPJobs })
+    $jobTick.Start()
     [void]$f.ShowDialog()
+    $jobTick.Stop(); $jobTick.Dispose()
     $f.Dispose()
 }
 

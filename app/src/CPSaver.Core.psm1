@@ -1871,6 +1871,15 @@ function Get-CPRepoWebUrl {
 #  Everything comes from the solution headers, so all problems saved so far (by any version) count.
 #  Colors follow a validated palette: one blue ramp for magnitude, fixed categorical order for levels.
 
+function Get-CPExtreme {
+    <# Largest (or -Min smallest) .Value of a list of hashtables (Measure-Object can't read hashtable keys in PS 5.1). #>
+    param([object[]]$Items, [switch]$Max, [switch]$Min)
+    $best = $null
+    foreach ($i in @($Items)) { $v = [double]$i.Value; if ($null -eq $best -or ($Min -and $v -lt $best) -or (-not $Min -and $v -gt $best)) { $best = $v } }
+    if ($null -eq $best) { return 0 }
+    return $best
+}
+
 function ConvertTo-CPHtml([string]$Text) { return [System.Net.WebUtility]::HtmlEncode([string]$Text) }
 
 function Format-CPNum([double]$n) { return $n.ToString('0.#', [Globalization.CultureInfo]::InvariantCulture) }
@@ -1934,14 +1943,14 @@ function New-CPSvgHBars {
     param([object[]]$Rows, [int]$Width = 520, [int]$LabelWidth = 150, [string]$Unit = '')
     $rows = @($Rows)
     if ($rows.Count -eq 0) { return '<p class="empty">Nothing yet.</p>' }
-    $max = [double](($rows | Measure-Object -Property Value -Maximum).Maximum); if ($max -le 0) { $max = 1 }
+    $max = [double]((Get-CPExtreme $rows -Max)); if ($max -le 0) { $max = 1 }
     $rowH = 24; $barH = 14; $plotW = $Width - $LabelWidth - 50
     $h = $rows.Count * $rowH + 4
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.Append("<svg class=""chart"" viewBox=""0 0 $Width $h"" width=""100%"" role=""img"">")
     for ($i = 0; $i -lt $rows.Count; $i++) {
         $r = $rows[$i]; $y = $i * $rowH + 4
-        $w = [Math]::Max(2, [Math]::Round($plotW * [double]$r.Value / $max, 1))
+        $w = [Math]::Max(2.0, [Math]::Round($plotW * [double]$r.Value / $max, 1))
         $col = if ($r.Color) { $r.Color } else { 'var(--series-1)' }
         $tip = if ($r.Tip) { $r.Tip } else { "$($r.Label): $($r.Value)$Unit" }
         [void]$sb.Append("<g><title>$(ConvertTo-CPHtml $tip)</title>")
@@ -1959,9 +1968,9 @@ function New-CPSvgColumns {
     param([object[]]$Cols, [int]$Width = 560, [int]$Height = 190, [int]$LabelEvery = 1, [string]$Color = 'var(--series-1)')
     $cols = @($Cols)
     if ($cols.Count -eq 0) { return '<p class="empty">Nothing yet.</p>' }
-    $max = [double](($cols | Measure-Object -Property Value -Maximum).Maximum); if ($max -le 0) { $max = 1 }
+    $max = [double]((Get-CPExtreme $cols -Max)); if ($max -le 0) { $max = 1 }
     $left = 30; $bottom = 24; $top = 14; $plotW = $Width - $left - 6; $plotH = $Height - $bottom - $top
-    $step = $plotW / $cols.Count; $bw = [Math]::Max(3, [Math]::Min(28, $step - 2))
+    $step = $plotW / $cols.Count; $bw = [Math]::Max(3.0, [Math]::Min(28.0, $step - 2))
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.Append("<svg class=""chart"" viewBox=""0 0 $Width $Height"" width=""100%"" role=""img"">")
     $tick = [Math]::Max(1, [Math]::Ceiling($max / 4))
@@ -1979,7 +1988,7 @@ function New-CPSvgColumns {
         [void]$sb.Append("<g><title>$(ConvertTo-CPHtml $tip)</title><rect x=""$([Math]::Round($left + $i * $step, 1))"" y=""$top"" width=""$([Math]::Round($step, 1))"" height=""$plotH"" fill=""transparent""/>")
         if ($c.Value -gt 0) {
             # rounded top, square at the baseline
-            $r = [Math]::Min(4, [Math]::Min($bw / 2, $bh))
+            $r = [Math]::Min(4.0, [Math]::Min($bw / 2, $bh))
             [void]$sb.Append("<path d=""M$x,$($top + $plotH) V$($y + $r) Q$x,$y $($x + $r),$y H$($x + $bw - $r) Q$($x + $bw),$y $($x + $bw),$($y + $r) V$($top + $plotH) Z"" fill=""$Color""/>")
         }
         if ($i -eq $maxI -and $c.Value -gt 0) { [void]$sb.Append("<text x=""$($x + $bw / 2)"" y=""$($y - 4)"" class=""val"" text-anchor=""middle"">$($c.Value)</text>") }
@@ -1995,8 +2004,8 @@ function New-CPSvgLine {
     param([object[]]$Points, [int]$Width = 560, [int]$Height = 190, [int]$LabelEvery = 1, [double]$MinY = 0)
     $pts = @($Points)
     if ($pts.Count -lt 2) { return '<p class="empty">Needs at least two points - keep solving!</p>' }
-    $max = [double](($pts | Measure-Object -Property Value -Maximum).Maximum)
-    if ($MinY -lt 0) { $MinY = [double](($pts | Measure-Object -Property Value -Minimum).Minimum) * 0.9 }
+    $max = [double]((Get-CPExtreme $pts -Max))
+    if ($MinY -lt 0) { $MinY = [double]((Get-CPExtreme $pts -Min)) * 0.9 }
     if ($max -le $MinY) { $max = $MinY + 1 }
     $left = 40; $bottom = 24; $top = 14; $plotW = $Width - $left - 10; $plotH = $Height - $bottom - $top
     $sb = New-Object System.Text.StringBuilder

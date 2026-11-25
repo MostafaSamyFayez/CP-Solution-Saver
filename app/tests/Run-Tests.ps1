@@ -377,6 +377,9 @@ try {
     $rp = Save-CPReport -RepoPath $lv -Path (Join-Path $tmp 'report.html')
     $html = [IO.File]::ReadAllText($rp)
     Check 'report page is written' ((Test-Path $rp) -and $html -match '<svg' -and $html -match 'Problem solving report' -and $html -match 'Starred')
+    $bars = New-CPSvgHBars -Rows @(@{ Label = 'a'; Value = 1 }, @{ Label = 'b'; Value = 4 }) -Width 400 -LabelWidth 100
+    $widths = @([regex]::Matches($bars, 'x="100" y="\d+" width="([\d.]+)"') | ForEach-Object { [double]$_.Groups[1].Value })
+    Check 'chart bars are scaled to the values (PS 5.1 too)' ($widths.Count -eq 2 -and [Math]::Abs($widths[1] - 4 * $widths[0]) -lt 1) ($widths -join ',')
     $emptyRepo = Join-Path $tmp 'empty-report'; New-Item -ItemType Directory -Path $emptyRepo | Out-Null; Initialize-CPRepo $emptyRepo | Out-Null
     $er = $null; try { $er = New-CPReportHtml -RepoPath $emptyRepo } catch { Write-Host "    $($_.Exception.Message)" }
     Check 'report works with no solutions yet' ($er -and $er -match 'Nothing yet')

@@ -398,7 +398,7 @@ try {
     Check 'Python: def, # comment, triple-quoted and f-strings, decorator, None, number' ($kindOf['def'] -eq 'keyword' -and $kindOf['# hi'] -eq 'comment' -and $kindOf["'''a`nb'''"] -eq 'string' -and $kindOf['f"{x}"'] -eq 'string' -and $kindOf['@cache'] -eq 'preproc' -and $kindOf['None'] -eq 'keyword' -and $kindOf['1.5e3'] -eq 'number')
     $tok = Get-CPCodeTokens -Code 'String a; string b;' -Language 'Java'
     Check 'word lists are case-sensitive (Java String is a type, string is not)' ($tok[0].Kind -eq 'type' -and @($tok | Where-Object { $_.Text -ceq 'string' })[0].Kind -eq 'plain')
-    $rtf = ConvertTo-CPCodeRtf -Code "int a{1};`n`tx\y é" -Language 'C++' -LineNumbers
+    $rtf = ConvertTo-CPCodeRtf -Code ("int a{1};`n`tx\y " + [char]233) -Language 'C++' -LineNumbers
     Check 'RTF: header, escaped braces/backslash/tab/unicode, one \par per line break' ($rtf.StartsWith('{\rtf1') -and $rtf.EndsWith('}') -and $rtf.Contains('\{') -and $rtf.Contains('\}') -and $rtf.Contains('x\\y') -and $rtf.Contains('\tab ') -and $rtf.Contains('\u233?') -and ([regex]::Matches($rtf, '\\par\b').Count -eq 1))
     Check 'RTF: line numbers, and dark theme colours' ($rtf.Contains(' 1  ') -and $rtf.Contains(' 2  ') -and (ConvertTo-CPCodeRtf -Code 'int x;' -Dark).Contains('\red30\green30\blue30;'))
     Check 'copied text loses the line numbers' ((Remove-CPLineNumbers "  9  int a;`n 10    b++;") -ceq "int a;`n  b++;")

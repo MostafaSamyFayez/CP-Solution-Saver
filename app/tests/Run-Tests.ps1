@@ -420,6 +420,8 @@ foreach ($m in [regex]::Matches($guiText, '\$ui\.(\w+) = New-CPButton')) {
     $bn = $m.Groups[1].Value
     Check "button '$bn' has a click handler" ($guiText -match ('\$ui\.' + $bn + '\.Add_Click'))
 }
+$guiOnly = $guiText -replace '(?ms)^function Write-CPGuiTrace.*?^}', ''
+Check "the GUI file calls Write-CPTrace only behind a check (it lives in the tray file)" (-not ([regex]::Matches($guiOnly, '(?m)^(?!.*Get-Command Write-CPTrace).*\bWrite-CPTrace\b').Count))
 Check "'Check for updates' button in the save window and in Settings" ((([regex]::Matches($guiText, "New-CPButton 'Check for updates'")).Count -ge 2) -and (([regex]::Matches($guiText, 'Invoke-CPUpdateCheck -Owner \$f')).Count -ge 2))
 
 Write-Host ("`n{0} passed, {1} failed" -f $script:pass, $script:fail) -ForegroundColor $(if ($script:fail) { 'Red' } else { 'Green' })

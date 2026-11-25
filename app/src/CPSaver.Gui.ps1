@@ -576,6 +576,11 @@ function Wait-CPBackground {
     return $box
 }
 
+function Write-CPGuiTrace([string]$Message) {
+    <# Writes to the tray's trace log when the tray is loaded (windows can also run on their own). #>
+    if (Get-Command Write-CPTrace -ErrorAction SilentlyContinue) { Write-CPTrace $Message }
+}
+
 function Invoke-CPUpdateCheck {
     <# The "Check for updates" buttons: asks GitHub now, shows "Version X is available" (or "up to date"),
        and on "Update now" downloads the new version and starts its installer (it restarts the app).
@@ -585,11 +590,11 @@ function Invoke-CPUpdateCheck {
     try { $chk = Wait-CPBackground -Script { Get-CPLatestRelease } } finally { try { $busy.Close(); $busy.Dispose() } catch { } }
     $rel = $chk.Result
     if ($chk.Error -or -not ($rel -is [hashtable])) {
-        Write-CPTrace "update check (button) failed: $($chk.Error)"
+        Write-CPGuiTrace "update check (button) failed: $($chk.Error)"
         Show-CPResultDialog -Title 'Could not check for updates' -Lines @("$($chk.Error)", 'Check your internet connection and try again.') -Kind Error | Out-Null
         return
     }
-    Write-CPTrace "update check (button): latest $($rel.Version), installed $(Get-CPCurrentVersion)"
+    Write-CPGuiTrace "update check (button): latest $($rel.Version), installed $(Get-CPCurrentVersion)"
     if (-not (Test-CPUpdateAvailable -Release $rel -IgnoreSkipped)) {
         Show-CPResultDialog -Title 'You have the latest version' -Lines @("CP Solution Saver $(Get-CPCurrentVersion) is up to date.") -Kind Info | Out-Null
         return
@@ -604,11 +609,11 @@ function Invoke-CPUpdateCheck {
     $busy = Show-CPBusy "Downloading version $($rel.Version) ..."
     try { $dl = Wait-CPBackground -Script { param($r) Save-CPUpdatePackage -Release $r } -Arguments @($rel) } finally { try { $busy.Close(); $busy.Dispose() } catch { } }
     if ($dl.Error -or -not $dl.Result) {
-        Write-CPTrace "update download (button) failed: $($dl.Error)"
+        Write-CPGuiTrace "update download (button) failed: $($dl.Error)"
         Show-CPResultDialog -Title 'The update could not be downloaded' -Lines @("$($dl.Error)", 'Try again later, or download it from the release page.') -Kind Error | Out-Null
         return
     }
-    Write-CPTrace "starting the update installer: $($dl.Result)"
+    Write-CPGuiTrace "starting the update installer: $($dl.Result)"
     if ($Owner -and -not $Owner.IsDisposed) { try { $Owner.Close() } catch { } }
     Start-CPUpdateInstaller -InstallerPath ([string]$dl.Result)    # it closes this app, updates it and starts it again
 }

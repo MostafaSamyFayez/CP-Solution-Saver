@@ -833,11 +833,12 @@ function Show-CPSettingsDialog {
 
     # bottom buttons
     $btns = New-Object System.Windows.Forms.FlowLayoutPanel
-    $btns.FlowDirection = 'RightToLeft'; $btns.AutoSize = $true; $btns.Dock = 'Fill'; $btns.Margin = New-Object System.Windows.Forms.Padding(3, 14, 3, 3)
+    # pinned to the bottom of the window (outside the scrolling area), so Save is always visible
+    $btns.FlowDirection = 'RightToLeft'; $btns.AutoSize = $false; $btns.Dock = 'Bottom'; $btns.Height = 52
+    $btns.Padding = New-Object System.Windows.Forms.Padding(14, 8, 14, 8); $btns.BackColor = [System.Drawing.Color]::White
     $ok = New-CPButton 'Save' 100; Set-CPPrimary $ok
     $cancel = New-CPButton 'Cancel' 90; $cancel.DialogResult = 'Cancel'
     $btns.Controls.Add($cancel); $btns.Controls.Add($ok)
-    $grid.Controls.Add($btns, 0, $row); $grid.SetColumnSpan($btns, 3); $row++
     $grid.RowCount = $row
 
     $ok.Add_Click({
@@ -867,7 +868,7 @@ function Show-CPSettingsDialog {
         $f.Close()
     })
 
-    $f.Controls.Add($grid); $f.Controls.Add($hdr.Panel); $f.CancelButton = $cancel
+    $f.Controls.Add($grid); $f.Controls.Add($btns); $f.Controls.Add($hdr.Panel); $f.CancelButton = $cancel
     $f.Add_Shown({ Show-CPForeground $f })
     return ($f.ShowDialog() -eq 'OK')
 }

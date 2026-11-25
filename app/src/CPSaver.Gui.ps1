@@ -1441,7 +1441,7 @@ function Show-CPBrowser {
 
     # ---------------------------------------------------------------- data
     $dt = New-Object System.Data.DataTable
-    foreach ($c in @('#', 'Star', 'Name', 'Platform', 'ID', 'Difficulty', 'Level', 'Topics', 'Language', 'Solved', 'Path', 'Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'NumSort', 'Starred', 'SearchText')) { [void]$dt.Columns.Add($c, [string]) }
+    foreach ($c in @('#', 'Star', 'Name', 'Platform', 'ID', 'Difficulty', 'Level', 'Topics', 'Language', 'Solved', 'Path', 'Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'DiffSortDesc', 'NumSort', 'Starred', 'SearchText')) { [void]$dt.Columns.Add($c, [string]) }
     $view = New-Object System.Data.DataView($dt)
     # sort: column + direction, remembered in the settings ("Num DESC" = newest number first)
     $sortParts = ([string]$Config.BrowserSort) -split ' '
@@ -1474,6 +1474,8 @@ function Show-CPBrowser {
             $r['Topics'] = ($tl -join ', '); $r['Language'] = $s.Language; $r['Solved'] = $s.DateSolved; $r['Path'] = $s.RelPath; $r['Link'] = $s.Link
             $r['FullPath'] = $s.FullPath; $r['TopicsKey'] = ',' + ($tl -join ',') + ','
             $r['DiffGroup'] = $dg.Label; $r['DiffSort'] = (Get-CPDifficultySortKey $s.Difficulty $s.Level)
+            # for "hardest first": unrated problems still go to the end
+            $r['DiffSortDesc'] = $(if ($s.Level) { $r['DiffSort'] } else { '0' + $r['DiffSort'] })
             $r['SearchText'] = (@($s.Name, $s.Id, $s.Platform, $s.RelPath, $s.Notes, ($tl -join ' '), $s.Link, $s.Level, "#$($s.Number)") -join ' ').ToLowerInvariant()
             $dt.Rows.Add($r)
             $plats[$s.Platform] = 1; foreach ($t in $tl) { $topics[$t] = 1 }; if ($dg.Label -ne 'Unrated' -and $dg.Label -notin @('Easy', 'Medium', 'Hard')) { $diffs[$dg.Label] = $dg.SortKey }; $langs[$s.Language] = 1
@@ -1488,6 +1490,10 @@ function Show-CPBrowser {
         & $applyFilter
     }
 
+    $setGlyph = {
+        $glyphCol = if ($st.SortCol -eq 'Num') { '#' } else { $st.SortCol }
+        foreach ($c in $g.Columns) { $c.HeaderCell.SortGlyphDirection = $(if ($c.Name -eq $glyphCol) { if ($st.SortDesc) { 'Descending' } else { 'Ascending' } } else { 'None' }) }
+    }
     $applyFilter = {
         if ($st.Loading) { return }
         $conds = New-Object System.Collections.Generic.List[string]
@@ -1505,8 +1511,10 @@ function Show-CPBrowser {
         if ($b.Lang.SelectedIndex -gt 0) { $conds.Add("Language = '" + ([string]$b.Lang.SelectedItem -replace "'", "''") + "'") }
         if ($b.StarOnly.Checked) { $conds.Add("Starred = '1'") }
         $view.RowFilter = ($conds -join ' AND ')
-        $sortCol = switch ($st.SortCol) { 'Difficulty' { 'DiffSort' } 'Level' { 'DiffSort' } 'Num' { 'NumSort' } '#' { 'NumSort' } 'Star' { 'Starred' } default { "[$($st.SortCol)]" } }
+        $diffKey = if ($st.SortDesc) { 'DiffSortDesc' } else { 'DiffSort' }
+        $sortCol = switch ($st.SortCol) { 'Difficulty' { $diffKey } 'Level' { $diffKey } 'Num' { 'NumSort' } '#' { 'NumSort' } 'Star' { 'Starred' } default { "[$($st.SortCol)]" } }
         $view.Sort = "$sortCol $(if ($st.SortDesc) { 'DESC' } else { 'ASC' }), NumSort DESC"
+        & $setGlyph
         $b.Status.ForeColor = [System.Drawing.Color]::Black
         $b.Status.Text = if ($st.Total -eq 0) { 'No solutions saved yet. Save one first, then come back here.' } else { "Showing $($view.Count) of $($st.Total) solutions" }
         if ($view.Count -eq 0) { $b.Preview.Text = ''; $b.PrevTitle.Text = 'No match.' }
@@ -1514,13 +1522,12 @@ function Show-CPBrowser {
 
     $g.DataSource = $view
     $g.Add_DataBindingComplete({
-        foreach ($c in @('Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'NumSort', 'Starred', 'SearchText')) { if ($g.Columns[$c]) { $g.Columns[$c].Visible = $false } }
+        foreach ($c in @('Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'DiffSortDesc', 'NumSort', 'Starred', 'SearchText')) { if ($g.Columns[$c]) { $g.Columns[$c].Visible = $false } }
         $weights = @{ '#' = 5; Star = 3; Name = 24; Platform = 10; ID = 7; Difficulty = 8; Level = 7; Topics = 20; Language = 7; Solved = 9; Path = 20 }
         foreach ($k in $weights.Keys) { if ($g.Columns[$k]) { $g.Columns[$k].FillWeight = $weights[$k]; $g.Columns[$k].SortMode = 'Programmatic' } }
         if ($g.Columns['Star']) { $g.Columns['Star'].HeaderText = $starMark; $g.Columns['Star'].DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(212, 167, 44); $g.Columns['Star'].DefaultCellStyle.Alignment = 'MiddleCenter'; $g.Columns['Star'].ToolTipText = 'Starred (click the star cell or the Star button)' }
         if ($g.Columns['#']) { $g.Columns['#'].DefaultCellStyle.ForeColor = $script:CPMuted; $g.Columns['#'].ToolTipText = 'Problem number: #1 is the first problem you solved' }
-        $glyphCol = if ($st.SortCol -eq 'Num') { '#' } else { $st.SortCol }
-        foreach ($c in $g.Columns) { if ($c.Name -eq $glyphCol) { $c.HeaderCell.SortGlyphDirection = $(if ($st.SortDesc) { 'Descending' } else { 'Ascending' }) } else { $c.HeaderCell.SortGlyphDirection = 'None' } }
+        & $setGlyph
     })
     $g.Add_ColumnHeaderMouseClick({
         param($s, $e)
@@ -1571,7 +1578,7 @@ function Show-CPBrowser {
         # show it right away; the file edit + commit + push run in the background
         $r['Starred'] = $(if ($newVal) { '1' } else { '0' }); $r['Star'] = $(if ($newVal) { $starMark } else { '' })
         $b.Star.Text = $(if ($newVal) { 'Unstar' } else { $starMark + ' Star' })
-        $st.StarBusy = $true
+        $st.StarBusy = $true; $st.StarRel = $rel
         $b.Status.ForeColor = $script:CPMuted; $b.Status.Text = "$(if ($newVal) { 'Starring' } else { 'Unstarring' }) $($r['Name'])..."
         Start-CPJob -Owner $f -Arguments @($Config.RepoPath, $rel, $newVal, [bool]$Config.PushAfterSave, [bool]$Config.UpdateIndexes, [int]$Config.LevelMediumFrom, [int]$Config.LevelHardFrom) -Script {
             param($repo, $relPath, $val, $push, $idx, $lm, $lh)
@@ -1588,6 +1595,8 @@ function Show-CPBrowser {
             }
             $b.Status.ForeColor = $script:CPGreen
             $b.Status.Text = "Done: $($res.Message)"
+            $cr = & $current
+            if ($cr -and $cr['Path'] -eq $st.StarRel) { try { $b.Preview.Text = ([IO.File]::ReadAllText($cr['FullPath']) -replace "(?<!`r)`n", "`r`n") } catch { } }
         }
     }
     $b.Star.Add_Click({ Invoke-CPSafe -What 'Star' $doStar })

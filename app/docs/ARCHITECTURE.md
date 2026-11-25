@@ -150,6 +150,7 @@ defaults, so new keys get their default automatically):
 | `BackupsToKeep` | `30` | |
 | `LevelMediumFrom` / `LevelHardFrom` | `1200` / `1800` | numeric rating cut-offs for Easy / Medium / Hard |
 | `BrowserSort` | `'Num DESC'` | last sort in Solved problems |
+| `CodeViewerDark`, `CodeViewerLineNumbers` | `$false`, `$true` | code viewer theme / line numbers |
 | `TutorialShown` | `false` | the welcome tour was seen; the installer resets it on every interactive install (not on `-Update`/`-Quiet`) |
 | `AutoUpdateCheck` | `true` | check GitHub for a newer release (asks before updating) |
 | `LastUpdateCheck` | `''` | `yyyy-MM-dd HH:mm` of the last automatic check |
@@ -238,6 +239,7 @@ Exported: every `*-CP*` function. Sections in file order:
 | Loading back | `Backup-CPPracticeFile`, `Get-CPImportTarget` (practice file of the same language), `Import-CPSolution` |
 | GitHub | `Get-CPGitHubToken` (`git credential fill`; never logged), `New-CPGitHubRepo`, `Connect-CPGitHub`, `Get-CPRepoWebUrl`, `Get-CPFileWebUrl` |
 | Updates | `Get-CPCurrentVersion`, `Compare-CPVersion`, `Get-CPLatestRelease` (GitHub API, no sign-in), `ConvertTo-CPReleaseInfo`, `Test-CPUpdateAvailable`, `Test-CPUpdateCheckDue`, `Save-CPUpdatePackage` (download + extract the release zip) |
+| Code colouring | `Get-CPCodeTokenizer` (one cached regex per language + case-sensitive word lists in `$script:CodeWords`), `Get-CPCodeTokens` (pieces `@{Text; Kind}`: comment, string, number, keyword, type, builtin, function, preproc, plain - joined they give the code back exactly), `Get-CPCodeColors` (VS Code Light+/Dark+ colours), `ConvertTo-CPCodeRtf` (RTF for a RichTextBox, optional line numbers), `ConvertTo-CPRtfText`, `Remove-CPLineNumbers`. To add a language: add its words to `$script:CodeWords` under the name `Get-CPLanguage` returns; Python-style comments/strings are chosen by `Language -eq 'Python'` |
 
 ## 8. The save pipeline step by step
 
@@ -278,7 +280,8 @@ Dot-sourced into the process (needs the Core module imported first). Contains:
 | Function | Window |
 |---|---|
 | `Show-CPMainWindow` | the save window (fields, *Will be saved as*, options, buttons, log) |
-| `Show-CPBrowser` | Solved problems: search, filters (levels + ratings, starred only), #/star/level columns, sorting (remembered), star toggle (background job), preview, load back |
+| `Show-CPBrowser` | Solved problems: search, filters (levels + ratings, starred only), #/star/level columns, sorting (remembered), star toggle (Star button only, background job), coloured preview, double-click/Enter/View code -> `Show-CPCodeViewer`, load back (green button only) |
+| `Show-CPCodeViewer`, `New-CPCodeBox`, `Set-CPCodeBox` | code viewer window (colours, line numbers, dark theme, zoom, copy without numbers); the read-only RichTextBox; fills it from `ConvertTo-CPCodeRtf` |
 | `Open-CPReport` | builds the analytics report and opens it in the default browser |
 | `Show-CPTemplatePicker` | code templates: preview, load, set default per language |
 | `Show-CPSettingsDialog` | settings, repo helpers (clone / create / connect to GitHub) |

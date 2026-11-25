@@ -212,9 +212,13 @@ Start Menu > *CP Solution Saver - Solved problems*.
   ratings. **Starred** shows only starred problems. **Clear** resets them.
 - Click a column header to sort, and again to reverse: **#**, star, name, platform, difficulty (by level,
   then rating), date... The filtered list stays filtered; your last sort is remembered.
-- **Star** (or click the star cell) stars / unstars the selected problem.
-- The lower half previews the selected solution.
-- **Load into practice file** (or double-click / Enter): asks first, **backs up your current file**
+- **Star** stars / unstars the selected problem (only this button changes the star; clicking a row
+  just selects it).
+- The lower half previews the selected solution, with syntax colouring.
+- **Double-click** a problem (or Enter, or **View code**) to open its solution in a bigger window:
+  coloured by language (C++, C, Python, Java, C#, JavaScript, Go, Rust, Kotlin), line numbers, light
+  or dark theme, zoom (A- / A+ or Ctrl+wheel), and **Copy code** (copies without the line numbers).
+- **Load into practice file** (the green button - the only way to load): asks first, **backs up your current file**
   to `%APPDATA%\CPSolutionSaver\backups` (the newest 30 are kept; **Backups** button opens the folder),
   then puts the solution into the practice file **of its language** (`.py` solutions go into `main.py`).
   Visual Studio asks to reload the file: choose **Yes**.

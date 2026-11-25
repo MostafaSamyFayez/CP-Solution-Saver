@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.8.0 - 2026-11-25
+
+### Code viewer
+- **Double-click** a problem in Solved problems (or press Enter, or the new **View code** button) to
+  open its solution in a window with **syntax colouring** for C++, C, Python, Java, C#, JavaScript,
+  Go, Rust and Kotlin: comments, strings, numbers, keywords, types, library names, function calls and
+  `#include` lines each have their colour (like VS Code).
+- Line numbers, light / dark theme (remembered), zoom (A- / A+ or Ctrl+wheel), **Copy code** (the
+  selection or the whole file, never with the line numbers), Open problem page, Open file. Esc closes.
+- The preview in Solved problems is coloured too.
+
+### Solved problems: safer clicks
+- Clicking a row (also on its star) only selects it: starring / unstarring is done **only with the
+  Star button**.
+- A double-click or Enter no longer loads a solution into your practice file: loading is done
+  **only with the green Load button** (it still asks first and backs up your file).
+
 ## 2.7.1 - 2026-11-25
 
 - **Check for updates** button in the save window (bottom row) and in Settings (next to the

@@ -429,7 +429,7 @@ function Show-CPWelcome {
     # 4 - find again
     $p = & $newPage 'Find and reuse your solutions'
     $p.Controls.Add((& $keycap 'Ctrl+Alt+Shift+B' 'Solved problems: search by name, filter by platform, topic, difficulty or language.'))
-    $p.Controls.Add((& $para 'Pick one and press Enter to load it back into your practice file to review it (your current file is backed up first).'))
+    $p.Controls.Add((& $para 'Double-click one to read its code (coloured). The green Load button puts it back into your practice file (your current file is backed up first).'))
     $p.Controls.Add((& $para 'Tray menu > Code templates: choose a starting template (competitive C++, fast I/O, multiple test cases, C, Python ...).' $script:CPFont $script:CPMuted))
     $pages.Add($p)
     # 5 - setup
@@ -1407,6 +1407,118 @@ function Open-CPReport {
     Start-Process $path
 }
 
+# ============================================================================
+#  Code viewer (double-click a problem in Solved problems)
+# ============================================================================
+function Set-CPCodeBox {
+    <# Fills a RichTextBox with coloured code (see ConvertTo-CPCodeRtf) and sets its background. #>
+    param([Parameter(Mandatory)]$Box, [AllowEmptyString()][string]$Code = '', [string]$Language = 'C++', [switch]$Dark, [switch]$LineNumbers)
+    $colors = Get-CPCodeColors -Dark:$Dark
+    $Box.BackColor = [System.Drawing.ColorTranslator]::FromHtml($colors.background)
+    $Box.ForeColor = [System.Drawing.ColorTranslator]::FromHtml($colors.plain)
+    try { $Box.Rtf = ConvertTo-CPCodeRtf -Code $Code -Language $Language -Dark:$Dark -LineNumbers:$LineNumbers }
+    catch { $Box.Text = $Code }
+    $Box.SelectionStart = 0; $Box.SelectionLength = 0
+}
+
+function New-CPCodeBox {
+    <# Read-only RichTextBox for code (no word wrap, Consolas). Ctrl+wheel zooms. #>
+    $r = New-Object System.Windows.Forms.RichTextBox
+    $r.ReadOnly = $true; $r.WordWrap = $false; $r.DetectUrls = $false; $r.ScrollBars = 'Both'; $r.HideSelection = $false
+    $r.BorderStyle = 'None'; $r.Dock = 'Fill'; $r.Font = New-Object System.Drawing.Font('Consolas', 10)
+    $r.ShortcutsEnabled = $true
+    return $r
+}
+
+function Show-CPCodeViewer {
+    <# Shows one solution file with syntax colouring. -Info: the problem's row (Name, Platform,
+       Difficulty, Level, Language, Path, Link, FullPath). Theme and line numbers are remembered. #>
+    param([Parameter(Mandatory)][string]$Path, [hashtable]$Info = @{}, $Config)
+    $code = ''
+    try { $code = [IO.File]::ReadAllText($Path) } catch { throw "Could not read the file: $($_.Exception.Message)" }
+    $lang = (Get-CPLanguage $Path).Name
+    $name = $(if ($Info.Name) { [string]$Info.Name } else { [IO.Path]::GetFileName($Path) })
+    $num = $(if ($Info.Num) { "#$($Info.Num)  " } else { '' })
+    $bits = @()
+    foreach ($k in @('Platform', 'Difficulty', 'Level')) { if ($Info[$k]) { $bits += [string]$Info[$k] } }
+    $bits += $lang
+    $lines = ($code -split "`n").Count
+    $bits += "$lines line$(if ($lines -ne 1) { 's' })"
+
+    $f = New-CPForm "CP Solution Saver - $name" 980 760 600 400
+    $hdr = New-CPHeader ($num + $name) ($bits -join '   |   ')
+    $hdr.Right.Text = $(if ($Info.Path) { [string]$Info.Path } else { $Path })
+
+    $st = @{
+        Dark = [bool]($Config -and $Config.CodeViewerDark)
+        Lines = $(if ($Config -and $null -ne $Config.CodeViewerLineNumbers) { [bool]$Config.CodeViewerLineNumbers } else { $true })
+    }
+    $box = New-CPCodeBox
+    $render = { $zoom = $box.ZoomFactor; Set-CPCodeBox -Box $box -Code $code -Language $lang -Dark:$st.Dark -LineNumbers:$st.Lines; $box.ZoomFactor = 1; $box.ZoomFactor = $zoom }
+
+    # toolbar
+    $bar = New-Object System.Windows.Forms.FlowLayoutPanel; $bar.Dock = 'Bottom'; $bar.Height = 50; $bar.WrapContents = $false
+    $bar.Padding = New-Object System.Windows.Forms.Padding(10, 8, 10, 6); $bar.BackColor = [System.Drawing.Color]::White
+    $copy = New-CPButton 'Copy code' 110; Set-CPPrimary $copy
+    $cLines = New-Object System.Windows.Forms.CheckBox; $cLines.Text = 'Line numbers'; $cLines.AutoSize = $true; $cLines.Checked = $st.Lines
+    $cLines.Margin = New-Object System.Windows.Forms.Padding(14, 9, 3, 3)
+    $cDark = New-Object System.Windows.Forms.CheckBox; $cDark.Text = 'Dark theme'; $cDark.AutoSize = $true; $cDark.Checked = $st.Dark
+    $cDark.Margin = New-Object System.Windows.Forms.Padding(8, 9, 3, 3)
+    $smaller = New-CPButton 'A-' 40; $bigger = New-CPButton 'A+' 40
+    $smaller.Margin = New-Object System.Windows.Forms.Padding(14, 3, 0, 3)
+    $openLink = New-CPButton 'Open problem page'
+    $openFile = New-CPButton 'Open file'
+    $close = New-CPButton 'Close' 80
+    $hint = New-CPLabel 'Ctrl+wheel to zoom'; $hint.ForeColor = [System.Drawing.Color]::Gray; $hint.Margin = New-Object System.Windows.Forms.Padding(10, 10, 3, 3)
+    foreach ($c in @($copy, $cLines, $cDark, $smaller, $bigger, $hint, $openLink, $openFile, $close)) { $bar.Controls.Add($c) }
+    if (-not $Info.Link) { $openLink.Enabled = $false }
+
+    $savePrefsSb = {
+        if (-not $Config) { return }
+        $Config.CodeViewerDark = $st.Dark; $Config.CodeViewerLineNumbers = $st.Lines
+        try { $c2 = Get-CPConfig; $c2.CodeViewerDark = $st.Dark; $c2.CodeViewerLineNumbers = $st.Lines; Save-CPConfig -Config $c2 } catch { }
+    }
+    $copyText = {
+        # the selection, or the whole file when nothing is selected - without the line numbers
+        if ($box.SelectionLength -gt 0) {
+            $t = $box.SelectedText
+            if ($st.Lines) { $t = Remove-CPLineNumbers $t }
+        } else { $t = $code }
+        $t = ($t -replace "`r`n", "`n") -replace "`n", "`r`n"
+        if ($t) { [System.Windows.Forms.Clipboard]::SetText($t) }
+        return ($box.SelectionLength -gt 0)
+    }
+    $copy.Add_Click({
+        $part = & $copyText
+        $copy.Text = $(if ($part) { 'Copied selection' } else { 'Copied!' })
+        $tm = New-Object System.Windows.Forms.Timer; $tm.Interval = 1500
+        $tm.Add_Tick({ $copy.Text = 'Copy code'; $this.Stop(); $this.Dispose() }); $tm.Start()
+    })
+    $cLines.Add_CheckedChanged({ $st.Lines = $cLines.Checked; & $render; & $savePrefsSb })
+    $cDark.Add_CheckedChanged({ $st.Dark = $cDark.Checked; & $render; & $savePrefsSb })
+    $smaller.Add_Click({ $box.ZoomFactor = [Math]::Max(0.5, $box.ZoomFactor - 0.1) })
+    $bigger.Add_Click({ $box.ZoomFactor = [Math]::Min(4.0, $box.ZoomFactor + 0.1) })
+    $lnk = [string]$Info.Link
+    $openLink.Add_Click({ if ($lnk) { Start-Process $lnk } }.GetNewClosure())
+    $openFile.Add_Click({ Start-Process notepad.exe -ArgumentList "`"$Path`"" })
+    $close.Add_Click({ $f.Close() })
+    $box.Add_KeyDown({
+        param($s, $e)
+        if ($e.Control -and ($e.KeyCode -eq 'C' -or $e.KeyCode -eq 'Insert')) { [void](& $copyText); $e.SuppressKeyPress = $true; $e.Handled = $true }
+    })
+    $f.KeyPreview = $true
+    $f.Add_KeyDown({ param($s, $e) if ($e.KeyCode -eq 'Escape') { $f.Close() } })
+
+    $wrap = New-Object System.Windows.Forms.Panel; $wrap.Dock = 'Fill'; $wrap.Padding = New-Object System.Windows.Forms.Padding(1)
+    $wrap.BackColor = [System.Drawing.Color]::FromArgb(220, 224, 229)
+    $wrap.Controls.Add($box)
+    $f.Controls.Add($wrap); $f.Controls.Add($bar); $f.Controls.Add($hdr.Panel)
+    $f.Add_Shown({ & $render; Show-CPForeground $f; $box.Focus() })
+    $script:CPActiveForm = $f
+    [void]$f.ShowDialog()
+    $f.Dispose()
+}
+
 function Show-CPBrowser {
     <#
       Lists every saved solution with search + filters and a code preview.
@@ -1473,11 +1585,10 @@ function Show-CPBrowser {
     $prevPanel.Dock = 'Fill'; $prevPanel.ColumnCount = 1; $prevPanel.RowCount = 2
     [void]$prevPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
     [void]$prevPanel.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
-    $b.PrevTitle = New-CPLabel 'Select a problem to preview its solution.' $script:CPFontBold
+    $b.PrevTitle = New-CPLabel 'Select a problem to preview its solution (double-click to open it in a bigger window).' $script:CPFontBold
     $b.PrevTitle.AutoSize = $false; $b.PrevTitle.Dock = 'Fill'; $b.PrevTitle.AutoEllipsis = $true; $b.PrevTitle.Height = 26
-    $b.Preview = New-Object System.Windows.Forms.TextBox
-    $b.Preview.Multiline = $true; $b.Preview.ReadOnly = $true; $b.Preview.ScrollBars = 'Both'; $b.Preview.WordWrap = $false
-    $b.Preview.Font = New-Object System.Drawing.Font('Consolas', 10); $b.Preview.Dock = 'Fill'; $b.Preview.BackColor = [System.Drawing.Color]::FromArgb(250, 250, 250)
+    $b.Preview = New-CPCodeBox
+    $b.Preview.BorderStyle = 'FixedSingle'
     $prevPanel.Controls.Add($b.PrevTitle, 0, 0); $prevPanel.Controls.Add($b.Preview, 0, 1)
     $split.Panel2.Controls.Add($prevPanel)
     $root.Controls.Add($split, 0, 2)
@@ -1498,8 +1609,9 @@ function Show-CPBrowser {
     $b.Refresh = New-CPButton 'Refresh'
     $b.Close = New-CPButton 'Close'
     $b.Star = New-CPButton ([string][char]0x2605 + ' Star') 100
+    $b.View = New-CPButton 'View code'
     $b.Report = New-CPButton 'Report'
-    foreach ($x in @($b.Load, $b.Star, $b.OpenLink, $b.OpenFile, $b.Report, $b.Backups, $b.Refresh, $b.Close)) { $btns.Controls.Add($x) }
+    foreach ($x in @($b.Load, $b.View, $b.Star, $b.OpenLink, $b.OpenFile, $b.Report, $b.Backups, $b.Refresh, $b.Close)) { $btns.Controls.Add($x) }
     $bottom.Controls.Add($b.Status, 0, 0); $bottom.Controls.Add($btns, 1, 0)
     $root.Controls.Add($bottom, 0, 3)
     $f.Controls.Add($root)
@@ -1591,7 +1703,7 @@ function Show-CPBrowser {
         foreach ($c in @('Link', 'FullPath', 'TopicsKey', 'DiffGroup', 'DiffSort', 'DiffSortDesc', 'NumSort', 'Starred', 'SearchText')) { if ($g.Columns[$c]) { $g.Columns[$c].Visible = $false } }
         $weights = @{ '#' = 5; Star = 3; Name = 24; Platform = 10; ID = 7; Difficulty = 8; Level = 7; Topics = 20; Language = 7; Solved = 9; Path = 20 }
         foreach ($k in $weights.Keys) { if ($g.Columns[$k]) { $g.Columns[$k].FillWeight = $weights[$k]; $g.Columns[$k].SortMode = 'Programmatic' } }
-        if ($g.Columns['Star']) { $g.Columns['Star'].HeaderText = $starMark; $g.Columns['Star'].DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(212, 167, 44); $g.Columns['Star'].DefaultCellStyle.Alignment = 'MiddleCenter'; $g.Columns['Star'].ToolTipText = 'Starred (click the star cell or the Star button)' }
+        if ($g.Columns['Star']) { $g.Columns['Star'].HeaderText = $starMark; $g.Columns['Star'].DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(212, 167, 44); $g.Columns['Star'].DefaultCellStyle.Alignment = 'MiddleCenter'; $g.Columns['Star'].ToolTipText = 'Starred (use the Star button to star or unstar)' }
         if ($g.Columns['#']) { $g.Columns['#'].DefaultCellStyle.ForeColor = $script:CPMuted; $g.Columns['#'].ToolTipText = 'Problem number: #1 is the first problem you solved' }
         & $setGlyph
     })
@@ -1611,12 +1723,17 @@ function Show-CPBrowser {
         if ($null -eq $drv) { return $null }
         return $drv.Row
     }
+    $showPreview = {
+        param($row)
+        try { Set-CPCodeBox -Box $b.Preview -Code ([IO.File]::ReadAllText($row['FullPath'])) -Language (Get-CPLanguage $row['FullPath']).Name }
+        catch { $b.Preview.Text = "Could not read the file: $($_.Exception.Message)" }
+    }
     $g.Add_SelectionChanged({
         $r = & $current
         if (-not $r) { return }
         $b.PrevTitle.Text = "#$($r['#'])  $($r['Name'])   -   $($r['Path'])"
         $b.Star.Text = $(if ($r['Starred'] -eq '1') { 'Unstar' } else { $starMark + ' Star' })
-        try { $b.Preview.Text = ([IO.File]::ReadAllText($r['FullPath']) -replace "(?<!`r)`n", "`r`n") } catch { $b.Preview.Text = "Could not read the file: $($_.Exception.Message)" }
+        & $showPreview $r
     })
 
     $doLoad = {
@@ -1633,6 +1750,14 @@ function Show-CPBrowser {
         $b.Status.ForeColor = $script:CPGreen
         if ($OnLoaded) { & $OnLoaded $r['Path'] }
         [System.Windows.Forms.MessageBox]::Show("Loaded into $tn.`n`nIf your editor asks whether to reload the file, choose Yes.", 'Load solution') | Out-Null
+    }
+
+    $doView = {
+        $r = & $current
+        if (-not $r) { $b.Status.Text = 'Select a problem first.'; return }
+        $info = @{ Name = $r['Name']; Num = $r['#']; Platform = $r['Platform']; Difficulty = $r['Difficulty']; Level = $r['Level']; Path = $r['Path']; Link = $r['Link'] }
+        Show-CPCodeViewer -Path $r['FullPath'] -Info $info -Config $Config
+        $script:CPActiveForm = $f
     }
 
     $doStar = {
@@ -1662,18 +1787,19 @@ function Show-CPBrowser {
             $b.Status.ForeColor = $script:CPGreen
             $b.Status.Text = "Done: $($res.Message)"
             $cr = & $current
-            if ($cr -and $cr['Path'] -eq $st.StarRel) { try { $b.Preview.Text = ([IO.File]::ReadAllText($cr['FullPath']) -replace "(?<!`r)`n", "`r`n") } catch { } }
+            if ($cr -and $cr['Path'] -eq $st.StarRel) { & $showPreview $cr }
         }
     }
     $b.Star.Add_Click({ Invoke-CPSafe -What 'Star' $doStar })
-    $g.Add_CellClick({ param($s, $e) if ($e.RowIndex -ge 0 -and $g.Columns[$e.ColumnIndex].Name -eq 'Star') { Invoke-CPSafe -What 'Star' $doStar } })
     $b.StarOnly.Add_CheckedChanged({ & $applyFilter })
     $b.Report.Add_Click({ Invoke-CPSafe -What 'Analytics report' { $f.Cursor = 'WaitCursor'; try { Open-CPReport -Config $Config } finally { $f.Cursor = 'Default' } } })
     $b.Search.Add_TextChanged({ & $applyFilter })
     foreach ($c in @($b.Platform, $b.Topic, $b.Diff, $b.Lang)) { $c.Add_SelectedIndexChanged({ & $applyFilter }) }
     $b.Clear.Add_Click({ $st.Loading = $true; $b.Search.Text = ''; $b.Platform.SelectedIndex = 0; $b.Topic.SelectedIndex = 0; $b.Diff.SelectedIndex = 0; $b.Lang.SelectedIndex = 0; $b.StarOnly.Checked = $false; $st.Loading = $false; & $applyFilter })
     $b.Load.Add_Click({ Invoke-CPSafe -What 'Loading the solution' $doLoad })
-    $g.Add_CellDoubleClick({ param($s, $e) if ($e.RowIndex -ge 0) { Invoke-CPSafe -What 'Loading the solution' $doLoad } })
+    # double-click (or Enter, or the View code button) shows the solution; loading is only the green button
+    $g.Add_CellDoubleClick({ param($s, $e) if ($e.RowIndex -ge 0) { Invoke-CPSafe -What 'Showing the solution' $doView } })
+    $b.View.Add_Click({ Invoke-CPSafe -What 'Showing the solution' $doView })
     $b.OpenLink.Add_Click({ $r = & $current; if ($r -and $r['Link']) { Start-Process $r['Link'] } else { $b.Status.Text = 'This problem has no link.' } })
     $b.OpenFile.Add_Click({ $r = & $current; if ($r) { Start-Process notepad.exe -ArgumentList "`"$($r['FullPath'])`"" } })
     $b.Backups.Add_Click({ $d = Get-CPBackupDir; if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }; Start-Process explorer.exe -ArgumentList "`"$d`"" })
@@ -1683,7 +1809,7 @@ function Show-CPBrowser {
         param($s, $e)
         if ($e.Control -and $e.KeyCode -eq 'F') { $b.Search.Focus(); $e.SuppressKeyPress = $true }
         elseif ($e.KeyCode -eq 'Escape') { $f.Close() }
-        elseif ($e.KeyCode -eq 'Enter' -and $g.Focused) { $e.SuppressKeyPress = $true; Invoke-CPSafe -What 'Loading the solution' $doLoad }
+        elseif ($e.KeyCode -eq 'Enter' -and $g.Focused) { $e.SuppressKeyPress = $true; Invoke-CPSafe -What 'Showing the solution' $doView }
     })
     $f.Add_Shown({
         Show-CPForeground $f

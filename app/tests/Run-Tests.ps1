@@ -384,6 +384,30 @@ try {
     $er = $null; try { $er = New-CPReportHtml -RepoPath $emptyRepo } catch { Write-Host "    $($_.Exception.Message)" }
     Check 'report works with no solutions yet' ($er -and $er -match 'Nothing yet')
 
+    Write-Host "`n[17] Code viewer colouring" -ForegroundColor Cyan
+    $cppSrc = "#include <bits/stdc++.h>`nusing namespace std;`n// note {x}`nint main() {`n    long long n = 0x1F; string s = `"a\`"b{}`"; char c = '\n';`n    /* multi`n       line */ cout << solve(n) << endl;`n}`n"
+    $tok = Get-CPCodeTokens -Code $cppSrc -Language 'C++'
+    $kindOf = @{}; foreach ($x in $tok) { if (-not $kindOf.ContainsKey($x.Text)) { $kindOf[$x.Text] = $x.Kind } }
+    Check 'C++ pieces join back to the exact code' ((($tok | ForEach-Object { $_.Text }) -join '') -ceq $cppSrc)
+    Check 'C++: #include, header, keyword, type, number, string, char, comment' ($kindOf['#include'] -eq 'preproc' -and $kindOf['<bits/stdc++.h>'] -eq 'string' -and $kindOf['using'] -eq 'keyword' -and $kindOf['int'] -eq 'type' -and $kindOf['0x1F'] -eq 'number' -and $kindOf['"a\"b{}"'] -eq 'string' -and $kindOf["'\n'"] -eq 'string' -and $kindOf['// note {x}'] -eq 'comment')
+    Check 'C++: multi-line comment, library name, function call' ($kindOf["/* multi`n       line */"] -eq 'comment' -and $kindOf['cout'] -eq 'builtin' -and $kindOf['solve'] -eq 'function' -and $kindOf['main'] -eq 'function')
+    $pySrc = "import sys`n@cache`ndef f(x):  # hi`n    s = '''a`nb''' + f`"{x}`"`n    return [int(v) for v in input().split()] if x > 1.5e3 else None`n"
+    $tok = Get-CPCodeTokens -Code $pySrc -Language 'Python'
+    $kindOf = @{}; foreach ($x in $tok) { if (-not $kindOf.ContainsKey($x.Text)) { $kindOf[$x.Text] = $x.Kind } }
+    Check 'Python pieces join back to the exact code' ((($tok | ForEach-Object { $_.Text }) -join '') -ceq $pySrc)
+    Check 'Python: def, # comment, triple-quoted and f-strings, decorator, None, number' ($kindOf['def'] -eq 'keyword' -and $kindOf['# hi'] -eq 'comment' -and $kindOf["'''a`nb'''"] -eq 'string' -and $kindOf['f"{x}"'] -eq 'string' -and $kindOf['@cache'] -eq 'preproc' -and $kindOf['None'] -eq 'keyword' -and $kindOf['1.5e3'] -eq 'number')
+    $tok = Get-CPCodeTokens -Code 'String a; string b;' -Language 'Java'
+    Check 'word lists are case-sensitive (Java String is a type, string is not)' ($tok[0].Kind -eq 'type' -and @($tok | Where-Object { $_.Text -ceq 'string' })[0].Kind -eq 'plain')
+    $rtf = ConvertTo-CPCodeRtf -Code "int a{1};`n`tx\y é" -Language 'C++' -LineNumbers
+    Check 'RTF: header, escaped braces/backslash/tab/unicode, one \par per line break' ($rtf.StartsWith('{\rtf1') -and $rtf.EndsWith('}') -and $rtf.Contains('\{') -and $rtf.Contains('\}') -and $rtf.Contains('x\\y') -and $rtf.Contains('\tab ') -and $rtf.Contains('\u233?') -and ([regex]::Matches($rtf, '\\par\b').Count -eq 1))
+    Check 'RTF: line numbers, and dark theme colours' ($rtf.Contains(' 1  ') -and $rtf.Contains(' 2  ') -and (ConvertTo-CPCodeRtf -Code 'int x;' -Dark).Contains('\red30\green30\blue30;'))
+    Check 'copied text loses the line numbers' ((Remove-CPLineNumbers "  9  int a;`n 10    b++;") -ceq "int a;`n  b++;")
+    Check 'empty file is fine' ((ConvertTo-CPCodeRtf -Code '').StartsWith('{\rtf1'))
+    $guiT = Get-Content -Raw -LiteralPath (Join-Path $SrcDir 'CPSaver.Gui.ps1')
+    Check 'Solved problems: clicking a row never stars it (Star button only)' (-not ($guiT -match 'Add_CellClick\(\{[^\n]*doStar'))
+    Check 'Solved problems: double-click and Enter show the code, never load it' (($guiT -match 'Add_CellDoubleClick\(\{[^\n]*\$doView') -and -not ($guiT -match 'Add_CellDoubleClick\(\{[^\n]*\$doLoad') -and -not ($guiT -match "KeyCode -eq 'Enter'[^\n]*\`$doLoad"))
+    Check 'Solved problems: only the green button loads' (([regex]::Matches($guiT, '\$doLoad\b')).Count -eq 2)
+
     if ($Online) {
         Write-Host "`n[11] Online lookups" -ForegroundColor Cyan
         $cf = Get-CPProblemMetadata 'https://codeforces.com/problemset/problem/4/A'

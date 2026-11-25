@@ -12,7 +12,7 @@
 # ----------------------------------------------------------------------------
 
 $script:AppName    = 'CPSolutionSaver'
-$script:AppVersion = '2.7.1'
+$script:AppVersion = '2.8.0'
 
 function Get-CPAppVersion { $script:AppVersion }
 
@@ -50,6 +50,8 @@ function Get-CPDefaultConfig {
         LevelMediumFrom  = 1200      # numeric ratings: below this = Easy
         LevelHardFrom    = 1800      # ... below this = Medium, this and above = Hard
         BrowserSort      = 'Num DESC' # last sort in Solved problems (column + ASC/DESC)
+        CodeViewerDark   = $false     # code viewer: dark colours
+        CodeViewerLineNumbers = $true # code viewer: line numbers
         LastUpdateCheck  = ''        # 'yyyy-MM-dd HH:mm' of the last automatic check
         SkippedVersion   = ''        # "Skip this version" in the update window
         ConfigVersion    = 4
@@ -2343,6 +2345,188 @@ function Save-CPUpdatePackage {
     if (-not $installer) { throw 'The downloaded update does not contain the installer.' }
     Get-ChildItem -LiteralPath $dir -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
     return $installer.FullName
+}
+
+# ============================================================================
+#  Code viewer: syntax colouring (tokens -> RTF for a RichTextBox)
+# ============================================================================
+$script:CodeWords = @{
+    'C++' = @{
+        Keyword = 'alignas alignof and asm auto break case catch class const constexpr const_cast continue co_await co_return co_yield decltype default delete do dynamic_cast else enum explicit export extern false final for friend goto if inline mutable namespace new noexcept not nullptr operator or override private protected public register reinterpret_cast return sizeof static static_assert static_cast struct switch template this thread_local throw true try typedef typeid typename union using virtual volatile while xor'
+        Type    = 'bool char char16_t char32_t double float int long short signed unsigned void wchar_t size_t int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t string vector map set unordered_map unordered_set multiset multimap pair tuple queue deque stack priority_queue array bitset list ll ull ld pii pll vi vll vvi std'
+        Builtin = 'cin cout cerr endl printf scanf puts getline min max swap sort reverse lower_bound upper_bound binary_search accumulate fill memset memcpy abs gcd lcm make_pair push_back pop_back emplace_back begin end size empty insert erase find count clear front back top push pop ios_base sync_with_stdio tie'
+    }
+    'C' = @{
+        Keyword = 'auto break case const continue default do else enum extern for goto if inline register restrict return sizeof static struct switch typedef union volatile while true false NULL'
+        Type    = 'bool char double float int long short signed unsigned void size_t int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t FILE'
+        Builtin = 'printf scanf puts gets getchar putchar malloc calloc realloc free memset memcpy strlen strcmp strcpy strcat qsort abs fabs sqrt pow fopen fclose fprintf fscanf'
+    }
+    'Python' = @{
+        Keyword = 'and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case False None True'
+        Type    = 'int float str bool list dict set tuple bytes object complex frozenset range'
+        Builtin = 'print input len map filter zip enumerate sorted reversed sum min max abs open isinstance super self cls pow divmod ord chr round any all iter next hex bin oct id hash type exit sys stdin readline'
+    }
+    'Java' = @{
+        Keyword = 'abstract assert break case catch class const continue default do else enum extends final finally for goto if implements import instanceof interface native new package private protected public return static strictfp super switch synchronized this throw throws transient try volatile while var record yield true false null'
+        Type    = 'boolean byte char double float int long short void String Integer Long Double Boolean Character Object List ArrayList Map HashMap Set HashSet TreeMap TreeSet Deque ArrayDeque Queue PriorityQueue Scanner StringBuilder BufferedReader InputStreamReader PrintWriter Arrays Collections Math System'
+        Builtin = 'println print printf out in nextInt nextLong next nextLine readLine parseInt parseLong add get put size isEmpty contains sort'
+    }
+    'C#' = @{
+        Keyword = 'abstract as base break case catch checked class const continue default delegate do else enum event explicit extern false finally fixed for foreach goto if implicit in interface internal is lock namespace new null operator out override params private protected public readonly ref return sealed sizeof stackalloc static struct switch this throw true try typeof unchecked unsafe using var virtual volatile while async await yield get set'
+        Type    = 'bool byte char decimal double float int long object sbyte short string uint ulong ushort void List Dictionary HashSet Queue Stack Console Math String'
+        Builtin = 'WriteLine Write ReadLine Parse Split Add Count Length'
+    }
+    'JavaScript' = @{
+        Keyword = 'async await break case catch class const continue debugger default delete do else export extends finally for function if import in instanceof let new of return super switch this throw try typeof var void while with yield true false null undefined'
+        Type    = 'Array Object String Number Boolean Map Set Math JSON BigInt Promise'
+        Builtin = 'console log require process push pop length parseInt parseFloat split map filter reduce join'
+    }
+    'Go' = @{
+        Keyword = 'break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var true false nil'
+        Type    = 'bool byte complex64 complex128 error float32 float64 int int8 int16 int32 int64 rune string uint uint8 uint16 uint32 uint64 uintptr'
+        Builtin = 'append cap close copy delete len make new panic print println recover fmt Println Printf Scan bufio os'
+    }
+    'Rust' = @{
+        Keyword = 'as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while'
+        Type    = 'bool char f32 f64 i8 i16 i32 i64 i128 isize str u8 u16 u32 u64 u128 usize String Vec Option Some None Result Ok Err Box HashMap HashSet'
+        Builtin = 'println print format vec read_line unwrap expect push len iter collect'
+    }
+    'Kotlin' = @{
+        Keyword = 'as break class continue do else false for fun if in interface is null object package return super this throw true try typealias val var when while import private public internal protected override open data companion lateinit'
+        Type    = 'Int Long Double Float Boolean Char String Unit Any List MutableList Map MutableMap Set Array IntArray LongArray'
+        Builtin = 'println print readLine readln toInt toLong split map listOf mutableListOf'
+    }
+}
+
+function Get-CPCodeTokenizer {
+    <# The regex and word lists for one language (cached). #>
+    param([string]$Language = 'C++')
+    if (-not $script:CodeWords.ContainsKey($Language)) { $Language = 'C++' }
+    if (-not $script:CodeTokenizers) { $script:CodeTokenizers = @{} }
+    if ($script:CodeTokenizers.ContainsKey($Language)) { return $script:CodeTokenizers[$Language] }
+    $words = $script:CodeWords[$Language]
+    # word lookups must be case-sensitive ('String' is a type in Java, 'string' is not)
+    $kind = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+    foreach ($w in ($words.Builtin -split ' ')) { if ($w) { $kind[$w] = 'builtin' } }
+    foreach ($w in ($words.Type -split ' ')) { if ($w) { $kind[$w] = 'type' } }
+    foreach ($w in ($words.Keyword -split ' ')) { if ($w) { $kind[$w] = 'keyword' } }
+    $q = "'"
+    $num = '(?<number>\b(?:0[xX][0-9a-fA-F_' + $q + ']+|0[bB][01_' + $q + ']+|\d[\d_' + $q + ']*(?:\.\d*)?(?:[eE][+-]?\d+)?)[uUlLfFjJ]*\b)'
+    $word = '(?<word>[A-Za-z_]\w*)(?<call>[ \t]*\()?'
+    if ($Language -eq 'Python') {
+        $tq = $q * 3
+        $pat = '(?<comment>#[^\n]*)' +
+               '|(?<string>(?:[rRbBuUfF]{1,2})?(?:"""[\s\S]*?(?:"""|\z)|' + $tq + '[\s\S]*?(?:' + $tq + '|\z)|"(?:\\.|[^"\\\n])*"?|' + $q + '(?:\\.|[^' + $q + '\\\n])*' + $q + '?))' +
+               '|(?<preproc>@[A-Za-z_][\w.]*)|' + $num + '|' + $word
+    } else {
+        $cmt = '(?<comment>//[^\n]*|/\*[\s\S]*?(?:\*/|\z))'
+        $pre = ''
+        if ($Language -in @('C++', 'C', 'C#')) { $pre = '|(?<preproc>(?m:^[ \t]*#[ \t]*\w+))|(?<string>(?<=#[ \t]*include[ \t]*)<[^>\n]*>)' }
+        $str = '(?<string>R"([^(\s]{0,16})\([\s\S]*?\)\1"|"(?:\\.|[^"\\\n])*"?|`[^`]*`?|' + $q + '(?:\\.|[^' + $q + '\\\n]){0,8}' + $q + ')'
+        $pat = $cmt + $pre + '|' + $str + '|' + $num + '|' + $word
+    }
+    $tk = @{ Regex = (New-Object System.Text.RegularExpressions.Regex($pat)); Kind = $kind }
+    $script:CodeTokenizers[$Language] = $tk
+    return $tk
+}
+
+function Get-CPCodeTokens {
+    <# Splits source code into coloured pieces: a list of @{ Text; Kind } where Kind is one of
+       plain, comment, string, number, keyword, type, builtin, function, preproc.
+       -Language is the name from Get-CPLanguage (C++, C, Python, Java, ...). Joining the Text
+       values gives back the code exactly. #>
+    param([AllowEmptyString()][string]$Code = '', [string]$Language = 'C++')
+    $out = New-Object System.Collections.Generic.List[object]
+    if (-not $Code) { return ,$out }
+    $tk = Get-CPCodeTokenizer $Language
+    $pos = 0
+    foreach ($m in $tk.Regex.Matches($Code)) {
+        if ($m.Index -gt $pos) { $out.Add(@{ Text = $Code.Substring($pos, $m.Index - $pos); Kind = 'plain' }) }
+        $g = $m.Groups
+        if ($g['word'].Success) {
+            $t = $g['word'].Value; $k = $null
+            if (-not $tk.Kind.TryGetValue($t, [ref]$k)) { $k = $(if ($g['call'].Success) { 'function' } else { 'plain' }) }
+            $out.Add(@{ Text = $t; Kind = $k })
+            $rest = $m.Value.Substring($t.Length)
+            if ($rest) { $out.Add(@{ Text = $rest; Kind = 'plain' }) }
+        } else {
+            $k = 'plain'
+            foreach ($n in @('comment', 'preproc', 'string', 'number')) { if ($g[$n].Success) { $k = $n; break } }
+            $out.Add(@{ Text = $m.Value; Kind = $k })
+        }
+        $pos = $m.Index + $m.Length
+    }
+    if ($pos -lt $Code.Length) { $out.Add(@{ Text = $Code.Substring($pos); Kind = 'plain' }) }
+    return ,$out
+}
+
+function Get-CPCodeColors {
+    <# Colours per token kind (like VS Code Light+ / Dark+). Ordered hashtable kind -> '#rrggbb'. #>
+    param([switch]$Dark)
+    if ($Dark) {
+        return [ordered]@{ background = '#1e1e1e'; plain = '#d4d4d4'; comment = '#6a9955'; string = '#ce9178'; number = '#b5cea8'
+                           keyword = '#569cd6'; type = '#4ec9b0'; builtin = '#dcdcaa'; function = '#dcdcaa'; preproc = '#c586c0'; linenumber = '#858585' }
+    }
+    return [ordered]@{ background = '#ffffff'; plain = '#1f1f1f'; comment = '#008000'; string = '#a31515'; number = '#098658'
+                       keyword = '#0000ff'; type = '#267f99'; builtin = '#795e26'; function = '#795e26'; preproc = '#af00db'; linenumber = '#999999' }
+}
+
+function ConvertTo-CPRtfText {
+    <# Escapes text for RTF (\ { } tabs and non-ASCII characters). #>
+    param([AllowEmptyString()][string]$Text = '')
+    $t = ($Text -replace '([\\{}])', '\$1') -replace "`t", '\tab '
+    if ($t -match '[^\x00-\x7e]') {
+        $t = [regex]::Replace($t, '[^\x00-\x7e]', { param($m) $n = [int][char]$m.Value; '\u' + $(if ($n -gt 32767) { $n - 65536 } else { $n }) + '?' })
+    }
+    return $t
+}
+
+function ConvertTo-CPCodeRtf {
+    <# Coloured RTF of the code for a RichTextBox. -LineNumbers adds a grey number in front of each
+       line (right-aligned number + two spaces; Remove-CPLineNumbers takes them off copied text). #>
+    param([AllowEmptyString()][string]$Code = '', [string]$Language = 'C++', [switch]$Dark, [switch]$LineNumbers, [int]$FontSize = 10)
+    $colors = Get-CPCodeColors -Dark:$Dark
+    $kinds = @($colors.Keys)
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('{\rtf1\ansi\deff0{\fonttbl{\f0\fmodern Consolas;}}{\colortbl ;')
+    foreach ($k in $kinds) {
+        $c = $colors[$k]
+        [void]$sb.Append(('\red{0}\green{1}\blue{2};' -f [Convert]::ToInt32($c.Substring(1, 2), 16), [Convert]::ToInt32($c.Substring(3, 2), 16), [Convert]::ToInt32($c.Substring(5, 2), 16)))
+    }
+    [void]$sb.Append('}\f0\fs' + ($FontSize * 2) + ' ')
+    $idx = @{}; for ($i = 0; $i -lt $kinds.Count; $i++) { $idx[$kinds[$i]] = $i + 1 }
+    $text = ($Code -replace "`r`n", "`n") -replace "`r", "`n"
+    $width = ([string]($text.Split("`n")).Count).Length
+    $line = 1
+    $lnCf = $idx['linenumber']
+    if ($LineNumbers) { [void]$sb.Append('\cf' + $lnCf + ' ' + ([string]$line).PadLeft($width) + '  ') }
+    $special = [char[]]@('\', '{', '}', "`t")
+    $lastCf = -1
+    foreach ($tok in (Get-CPCodeTokens -Code $text -Language $Language)) {
+        $cf = $idx[$tok.Kind]; if (-not $cf) { $cf = $idx['plain'] }
+        $piece = $tok.Text
+        if ($piece.IndexOf("`n") -ge 0) { [string[]]$parts = $piece.Split("`n") } else { [string[]]$parts = @($piece) }
+        for ($p = 0; $p -lt $parts.Count; $p++) {
+            if ($p -gt 0) {
+                [void]$sb.Append("\par`r`n")
+                $line++
+                if ($LineNumbers) { [void]$sb.Append('\cf' + $lnCf + ' ' + ([string]$line).PadLeft($width) + '  '); $lastCf = $lnCf }
+            }
+            $part = $parts[$p]
+            if (-not $part.Length) { continue }
+            if ($part.IndexOfAny($special) -ge 0 -or $part -match '[^\x00-\x7e]') { $part = ConvertTo-CPRtfText $part }
+            if ($cf -ne $lastCf) { [void]$sb.Append('\cf' + $cf + ' '); $lastCf = $cf }
+            if ($tok.Kind -eq 'keyword') { [void]$sb.Append('\b ' + $part + '\b0 ') } else { [void]$sb.Append($part) }
+        }
+    }
+    [void]$sb.Append('}')
+    return $sb.ToString()
+}
+
+function Remove-CPLineNumbers {
+    <# Takes the line numbers added by ConvertTo-CPCodeRtf -LineNumbers off copied text. #>
+    param([AllowEmptyString()][string]$Text = '')
+    return ($Text -replace '(?m)^ *\d+  ', '')
 }
 
 Export-ModuleMember -Function *-CP*, Get-CPAppVersion

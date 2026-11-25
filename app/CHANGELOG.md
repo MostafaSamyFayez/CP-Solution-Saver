@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.7.1 - 2026-11-25
+
+- **Check for updates** button in the save window (bottom row) and in Settings (next to the
+  installed version number). It asks GitHub right away and shows *Version X is available*
+  (*Update now* / *Later* / *Skip this version*) or *You have the latest version*. *Update now*
+  downloads the new version, closes the window and runs the setup in update mode (settings,
+  templates and solutions are kept). The tray menu item and the automatic check twice a day stay.
+
 ## 2.7.0 - 2026-11-25
 
 ### Analytics report

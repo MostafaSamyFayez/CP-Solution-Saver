@@ -562,6 +562,57 @@ function Start-CPUpdateInstaller {
     [void][System.Diagnostics.Process]::Start($psi)
 }
 
+function Wait-CPBackground {
+    <# Runs -Script in the background while this window stays responsive; returns @{ Result; Error }.
+       Used by buttons that need an answer before going on (e.g. "Check for updates"). #>
+    param([Parameter(Mandatory)][scriptblock]$Script, [object[]]$Arguments = @())
+    $box = @{ Done = $false; Result = $null; Error = $null }
+    Start-CPJob -Script $Script -Arguments $Arguments -OnDone { param($r, $e) $box.Result = $r; $box.Error = $e; $box.Done = $true }
+    while (-not $box.Done) {
+        [System.Windows.Forms.Application]::DoEvents()
+        Update-CPJobs
+        Start-Sleep -Milliseconds 50
+    }
+    return $box
+}
+
+function Invoke-CPUpdateCheck {
+    <# The "Check for updates" buttons: asks GitHub now, shows "Version X is available" (or "up to date"),
+       and on "Update now" downloads the new version and starts its installer (it restarts the app).
+       -Owner is the window the button is in; it is closed before the installer starts. #>
+    param([System.Windows.Forms.Form]$Owner, [string]$ConfigPath = (Get-CPDefaultConfigPath))
+    $busy = Show-CPBusy 'Checking for updates ...'
+    try { $chk = Wait-CPBackground -Script { Get-CPLatestRelease } } finally { try { $busy.Close(); $busy.Dispose() } catch { } }
+    $rel = $chk.Result
+    if ($chk.Error -or -not ($rel -is [hashtable])) {
+        Write-CPTrace "update check (button) failed: $($chk.Error)"
+        Show-CPResultDialog -Title 'Could not check for updates' -Lines @("$($chk.Error)", 'Check your internet connection and try again.') -Kind Error | Out-Null
+        return
+    }
+    Write-CPTrace "update check (button): latest $($rel.Version), installed $(Get-CPCurrentVersion)"
+    if (-not (Test-CPUpdateAvailable -Release $rel -IgnoreSkipped)) {
+        Show-CPResultDialog -Title 'You have the latest version' -Lines @("CP Solution Saver $(Get-CPCurrentVersion) is up to date.") -Kind Info | Out-Null
+        return
+    }
+    $answer = Show-CPUpdateDialog -Release $rel
+    if ($answer -eq 'skip') {
+        $c = Get-CPConfig $ConfigPath; $c.SkippedVersion = $rel.Version
+        try { Save-CPConfig -Config $c -Path $ConfigPath } catch { }
+        return
+    }
+    if ($answer -ne 'update') { return }
+    $busy = Show-CPBusy "Downloading version $($rel.Version) ..."
+    try { $dl = Wait-CPBackground -Script { param($r) Save-CPUpdatePackage -Release $r } -Arguments @($rel) } finally { try { $busy.Close(); $busy.Dispose() } catch { } }
+    if ($dl.Error -or -not $dl.Result) {
+        Write-CPTrace "update download (button) failed: $($dl.Error)"
+        Show-CPResultDialog -Title 'The update could not be downloaded' -Lines @("$($dl.Error)", 'Try again later, or download it from the release page.') -Kind Error | Out-Null
+        return
+    }
+    Write-CPTrace "starting the update installer: $($dl.Result)"
+    if ($Owner -and -not $Owner.IsDisposed) { try { $Owner.Close() } catch { } }
+    Start-CPUpdateInstaller -InstallerPath ([string]$dl.Result)    # it closes this app, updates it and starts it again
+}
+
 function New-CPTextBox([switch]$Multiline) {
     $t = New-Object System.Windows.Forms.TextBox
     $t.Font = $script:CPFont
@@ -839,6 +890,13 @@ function Show-CPSettingsDialog {
     $ok = New-CPButton 'Save' 100; Set-CPPrimary $ok
     $cancel = New-CPButton 'Cancel' 90; $cancel.DialogResult = 'Cancel'
     $btns.Controls.Add($cancel); $btns.Controls.Add($ok)
+    # also in the bar: a manual update check and the installed version
+    $upd = New-CPButton 'Check for updates'
+    $upd.Margin = New-Object System.Windows.Forms.Padding(3, 3, 24, 3)
+    $upd.Add_Click({ Invoke-CPSafe -What 'Checking for updates' { Invoke-CPUpdateCheck -Owner $f -ConfigPath $ConfigPath } })
+    $verL = New-CPLabel "Version $(Get-CPCurrentVersion)"; $verL.ForeColor = [System.Drawing.Color]::Gray
+    $verL.Margin = New-Object System.Windows.Forms.Padding(3, 9, 3, 3)
+    $btns.Controls.Add($upd); $btns.Controls.Add($verL)
     $grid.RowCount = $row
 
     $ok.Add_Click({
@@ -986,8 +1044,9 @@ function Show-CPMainWindow {
     $ui.Templates = New-CPButton 'Templates...'
     $ui.Help = New-CPButton 'How to use'
     $ui.Report = New-CPButton 'Report'
+    $ui.Updates = New-CPButton 'Check for updates'
     foreach ($b in @($ui.Save, $ui.Browse, $ui.Templates, $ui.Settings)) { $btns.Controls.Add($b) }
-    foreach ($b in @($ui.Report, $ui.OpenFolder, $ui.OpenWeb, $ui.Rebuild, $ui.Help)) { $b.Font = $script:CPFontSmall; $btns2.Controls.Add($b) }
+    foreach ($b in @($ui.Report, $ui.OpenFolder, $ui.OpenWeb, $ui.Rebuild, $ui.Help, $ui.Updates)) { $b.Font = $script:CPFontSmall; $btns2.Controls.Add($b) }
     $grid.Controls.Add($btns, 0, $row); $grid.SetColumnSpan($btns, 3); $row++
     $grid.Controls.Add($btns2, 0, $row); $grid.SetColumnSpan($btns2, 3); $row++
 
@@ -1197,6 +1256,7 @@ function Show-CPMainWindow {
     $ui.Save.Add_Click({ Invoke-CPSafe -What 'Saving' $doSave })
     $ui.Help.Add_Click({ Invoke-CPSafe -What 'How to use' { [void](Show-CPWelcome) } })
     $ui.Report.Add_Click({ Invoke-CPSafe -What 'Analytics report' { $f.Cursor = 'WaitCursor'; try { Open-CPReport -Config $Config } finally { $f.Cursor = 'Default' } } })
+    $ui.Updates.Add_Click({ Invoke-CPSafe -What 'Checking for updates' { Invoke-CPUpdateCheck -Owner $f -ConfigPath $ConfigPath } })
     $f.Add_FormClosing({ param($s, $e) if ($st.Busy) { $e.Cancel = $true; $ui.Status.Text = 'Please wait - still saving...' } })
     $ui.Fetch.Add_Click({ Invoke-CPSafe -What 'Online lookup' $doFetch })
     $ui.Reload.Add_Click({ Invoke-CPSafe -What 'Reload' { $ui.Log.Clear(); & $loadFile $true } })

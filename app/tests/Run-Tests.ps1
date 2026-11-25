@@ -420,6 +420,7 @@ foreach ($m in [regex]::Matches($guiText, '\$ui\.(\w+) = New-CPButton')) {
     $bn = $m.Groups[1].Value
     Check "button '$bn' has a click handler" ($guiText -match ('\$ui\.' + $bn + '\.Add_Click'))
 }
+Check "'Check for updates' button in the save window and in Settings" ((([regex]::Matches($guiText, "New-CPButton 'Check for updates'")).Count -ge 2) -and (([regex]::Matches($guiText, 'Invoke-CPUpdateCheck -Owner \$f')).Count -ge 2))
 
 Write-Host ("`n{0} passed, {1} failed" -f $script:pass, $script:fail) -ForegroundColor $(if ($script:fail) { 'Red' } else { 'Green' })
 if ($script:fail) { exit 1 } else { exit 0 }

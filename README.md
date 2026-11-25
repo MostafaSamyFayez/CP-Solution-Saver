@@ -133,8 +133,8 @@ You can also install non-interactively (from the `app` folder):
 
 **Updating:** the app checks GitHub for a newer version about twice a day and **asks you** before
 updating: *Update now* (downloads it and runs the setup in update mode: a few seconds, your settings,
-templates and solutions are kept), *Later*, or *Skip this version*. Check any time from the tray menu >
-**Check for updates...**; turn the automatic check off in Settings. (You can also download the zip
+templates and solutions are kept), *Later*, or *Skip this version*. Check any time with the **Check for updates**
+button (save window or Settings) or the tray menu > **Check for updates...**; turn the automatic check off in Settings. (You can also download the zip
 again and run `Install.bat`.) The app shows no Windows notifications when it starts.
 
 **From source (developers):** `git clone https://github.com/MostafaSamyFayez/CP-Solution-Saver.git`

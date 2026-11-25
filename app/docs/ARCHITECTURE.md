@@ -288,6 +288,7 @@ Dot-sourced into the process (needs the Core module imported first). Contains:
 | `Use-CPRepoFolder` | turns an empty folder into a repo (asks for a non-empty one) |
 | `Show-CPResultDialog`, `Show-CPBusy`, `Show-CPNotification` | quick save result, "working..." box, balloon (only if the user chose notifications for quick save) |
 | `Show-CPUpdateDialog`, `Start-CPUpdateInstaller` | "version X is available" window; starts the downloaded installer |
+| `Invoke-CPUpdateCheck -Owner`, `Wait-CPBackground` | the *Check for updates* buttons (save window, Settings): check now, offer, download, close the window, start the installer. `Wait-CPBackground` runs a job and pumps `DoEvents` + `Update-CPJobs` until it finishes, so it works with or without the tray's job timer |
 
 * **State inside a window**: a `$ui` hashtable (controls) and a `$st` hashtable (state) captured
   by the event handlers. Event handlers are scriptblocks that run while `ShowDialog()` is active,

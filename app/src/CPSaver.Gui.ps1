@@ -1485,14 +1485,18 @@ function Show-CPCodeViewer {
             if ($st.Lines) { $t = Remove-CPLineNumbers $t }
         } else { $t = $code }
         $t = ($t -replace "`r`n", "`n") -replace "`n", "`r`n"
-        if ($t) { [System.Windows.Forms.Clipboard]::SetText($t) }
+        # SetDataObject retries for a moment when another program is holding the clipboard
+        if ($t) { [System.Windows.Forms.Clipboard]::SetDataObject($t, $true, 10, 100) }
         return ($box.SelectionLength -gt 0)
     }
+    $copyTimer = New-Object System.Windows.Forms.Timer; $copyTimer.Interval = 1500
+    $copyTimer.Add_Tick({ $copy.Text = 'Copy code'; $copyTimer.Stop() })
     $copy.Add_Click({
-        $part = & $copyText
-        $copy.Text = $(if ($part) { 'Copied selection' } else { 'Copied!' })
-        $tm = New-Object System.Windows.Forms.Timer; $tm.Interval = 1500
-        $tm.Add_Tick({ $copy.Text = 'Copy code'; $this.Stop(); $this.Dispose() }); $tm.Start()
+        Invoke-CPSafe -What 'Copying the code' {
+            $part = & $copyText
+            $copy.Text = $(if ($part) { 'Copied selection' } else { 'Copied!' })
+            $copyTimer.Stop(); $copyTimer.Start()
+        }
     })
     $cLines.Add_CheckedChanged({ $st.Lines = $cLines.Checked; & $render; & $savePrefsSb })
     $cDark.Add_CheckedChanged({ $st.Dark = $cDark.Checked; & $render; & $savePrefsSb })
@@ -1504,7 +1508,7 @@ function Show-CPCodeViewer {
     $close.Add_Click({ $f.Close() })
     $box.Add_KeyDown({
         param($s, $e)
-        if ($e.Control -and ($e.KeyCode -eq 'C' -or $e.KeyCode -eq 'Insert')) { [void](& $copyText); $e.SuppressKeyPress = $true; $e.Handled = $true }
+        if ($e.Control -and ($e.KeyCode -eq 'C' -or $e.KeyCode -eq 'Insert')) { $e.SuppressKeyPress = $true; $e.Handled = $true; Invoke-CPSafe -What 'Copying the code' { [void](& $copyText) } }
     })
     $f.KeyPreview = $true
     $f.Add_KeyDown({ param($s, $e) if ($e.KeyCode -eq 'Escape') { $f.Close() } })
@@ -1516,6 +1520,7 @@ function Show-CPCodeViewer {
     $f.Add_Shown({ & $render; Show-CPForeground $f; $box.Focus() })
     $script:CPActiveForm = $f
     [void]$f.ShowDialog()
+    $copyTimer.Stop(); $copyTimer.Dispose()
     $f.Dispose()
 }
 
@@ -1528,7 +1533,7 @@ function Show-CPBrowser {
     param([Parameter(Mandatory)]$Config, [scriptblock]$OnLoaded)
 
     $f = New-CPForm 'CP Solution Saver - Solved problems' 1220 800 900 560
-    $hdr = New-CPHeader 'Solved problems' 'Search, filter, preview, and load a solution back   |   Ctrl+F search   |   Enter load'
+    $hdr = New-CPHeader 'Solved problems' 'Search, filter, read and load a solution back   |   Ctrl+F search   |   double-click or Enter: view code'
     $b = @{}
 
     $root = New-Object System.Windows.Forms.TableLayoutPanel
